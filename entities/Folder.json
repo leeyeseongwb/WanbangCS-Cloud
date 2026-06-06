@@ -1,0 +1,30 @@
+{
+  "name": "Folder",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Folder name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional description"
+    },
+    "color": {
+      "type": "string",
+      "description": "Folder accent color",
+      "enum": [
+        "blue",
+        "purple",
+        "emerald",
+        "orange",
+        "pink",
+        "amber"
+      ],
+      "default": "blue"
+    }
+  },
+  "required": [
+    "name"
+  ]
+}

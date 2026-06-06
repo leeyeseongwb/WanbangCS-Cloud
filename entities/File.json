@@ -1,0 +1,52 @@
+{
+    "name": "File",
+    "type": "object",
+    "properties": {
+    "name": {
+        "type": "string",
+        "description": "Original file name"
+    },
+    "file_url": {
+        "type": "string",
+        "description": "URL of the uploaded file"
+    },
+    "file_size": {
+        "type": "number",
+        "description": "File size in bytes"
+    },
+    "file_type": {
+        "type": "string",
+        "description": "MIME type of the file"
+    },
+    "category": {
+        "type": "string",
+        "enum": [
+        "document",
+        "image",
+        "video",
+        "audio",
+        "archive",
+        "other"
+        ],
+        "default": "other",
+        "description": "File category"
+    },
+    "description": {
+        "type": "string",
+        "description": "Optional description"
+    },
+    "folder_id": {
+        "type": "string",
+        "description": "ID of the parent folder (null = root)"
+    },
+    "published": {
+        "type": "boolean",
+        "default": true,
+        "description": "If false, file is hidden from regular users"
+    }
+    },
+    "required": [
+        "name",
+        "file_url"
+    ]
+}
