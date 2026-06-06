@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getSession, clearSession } from "@/lib/auth";
-import { listFiles, listFolders, deleteFolder, deleteFile, updateFolder, moveFileToFolder, handleDownload } from "@/api/fileService";
+import { listFiles, listFolders, deleteFolder, deleteFile, updateFolder, moveFileToFolder, handleDownload, downloadFilesAsZip } from "@/api/fileService";
 import Sidebar from "@/components/Sidebar";
 import MobileSidebar from "@/components/MobileSidebar";
 import SearchBar from "@/components/SearchBar";
@@ -22,6 +22,20 @@ import {
 import { toast } from "sonner";
 
 const PAGE_SIZE = 20;
+
+// Background task tracking via window events (no extra file dependency)
+let _taskId = 0;
+const addTask = (type, title) => {
+  const id = ++_taskId;
+  window.dispatchEvent(new CustomEvent('task:add', { detail: { id, type, title, progress: 0, status: "running" } }));
+  return id;
+};
+const updateTask = (id, updates) => {
+  window.dispatchEvent(new CustomEvent('task:update', { detail: { id, ...updates } }));
+};
+const removeTask = (id) => {
+  window.dispatchEvent(new CustomEvent('task:remove', { detail: { id } }));
+};
 
 export default function Home() {
   const [category, setCategory] = useState("all");
@@ -238,12 +252,33 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
   const handleBulkDownload = async () => {
     const toDownload = filteredFiles.filter(f => selectedIds.has(f.id));
     if (toDownload.length === 0) return;
-    for (const f of toDownload) {
-      try { await handleDownload(f); } catch (e) { console.warn(e); }
-      await new Promise(r => setTimeout(r, 300));
-    }
-    toast.success(`Downloaded ${toDownload.length} file(s)…`);
     clearSelection();
+
+    if (toDownload.length === 1) {
+      try {
+        await handleDownload(toDownload[0]);
+        toast.success(`Downloaded ${toDownload[0].name}`);
+      } catch (e) { console.warn(e); toast.error('Download failed'); }
+      return;
+    }
+
+    const taskId = addTask("download", `Downloading ${toDownload.length} file(s) as ZIP`);
+    try {
+      const result = await downloadFilesAsZip(toDownload, (progress) => {
+        updateTask(taskId, { progress: Math.round(progress * 100) });
+      });
+      if (result.success) {
+        updateTask(taskId, { progress: 100, status: "done" });
+        toast.success(`Downloaded ${result.count} file(s) as ZIP`);
+        setTimeout(() => removeTask(taskId), 2000);
+      } else {
+        updateTask(taskId, { status: "error", error: result.error });
+        toast.error(result.error || 'ZIP download failed');
+      }
+    } catch (err) {
+      updateTask(taskId, { status: "error", error: err.message });
+      toast.error("ZIP download failed");
+    }
   };
 
   const handleCategoryChange = (cat) => {
@@ -491,7 +526,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
         )}
 
         {/* Content */}
-        <div className="px-4 sm:px-6 lg:px-8 py-6 select-none" onMouseDown={handleMouseDown}>
+        <div className="px-4 sm:px-6 lg:px-8 py-6 select-none overflow-x-auto" onMouseDown={handleMouseDown}>
           {/* Drag selection box (viewport-based, fixed position) */}
           {dragBox && (
             <div
@@ -568,7 +603,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
                       ))}
                     </div>
                   ) : (
-                    <div className={`grid gap-4 ${view === "compact" ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6" : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"}`}>
+                    <div className={`flex gap-4 w-max pb-4`}>
                       {visibleFolders.map((folder) => (
                         <div
                           key={folder.id}
@@ -615,7 +650,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
                       ))}
                     </div>
                   ) : (
-                    <div className={`grid gap-4 ${view === "compact" ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6" : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"}`}>
+                    <div className={`flex gap-4 w-max pb-4`}>
                       {paginatedFiles.map((file) => (
                         <FileCard key={file.id} file={file} view={view} isManager={isManager} onDragStart={handleDragStart} onContextMenu={handleFileContextMenu} selected={selectedIds.has(file.id)} onSelect={(id, shift) => toggleSelect(id, shift)} />
                       ))}

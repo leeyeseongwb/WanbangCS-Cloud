@@ -1,3 +1,4 @@
+import JSZip from 'jszip'
 import { supabase } from './supabaseClient'
 
 // ============================================================
@@ -68,10 +69,14 @@ function detectCategory(mimeType) {
 }
 
 export async function uploadFile({ file, folderId = null, description = '', category = null, published = true }) {
-    // 1. Generate safe path
+    // 1. Generate safe path (short hash to avoid Supabase Storage path length limit ~255 chars)
     const timestamp = Date.now()
-    const safeName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, '_')
-    const path = `${timestamp}_${safeName}`
+    // Extract extension
+    const extMatch = file.name.match(/\.[^.]+$/)
+    const ext = extMatch ? extMatch[0] : ''
+    // Short hash of filename using simple hash
+    const fileNameHash = Array.from(file.name).reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, timestamp).toString(36)
+    const path = `${timestamp}_${fileNameHash}${ext}`
 
     const finalCategory = category || detectCategory(file.type)
 
@@ -205,4 +210,78 @@ export async function handleDownload(file) {
         console.error('Download error:', err);
         window.open(file.file_url, '_blank');
     }
+}
+
+/**
+ * 여러 파일을 하나의 ZIP으로 묶어 다운로드
+ * returns: { success: boolean, count: number, error?: string }
+ */
+export async function downloadFilesAsZip(files, onProgress) {
+    if (!files || files.length === 0) return { success: false, count: 0, error: 'No files to download' };
+
+    const zip = new JSZip();
+    const usedNames = {};
+    let downloadedCount = 0;
+    const total = files.length;
+
+    for (let i = 0; i < total; i++) {
+        const file = files[i];
+        if (!file?.storage_path) continue;
+        try {
+            const { data, error } = await supabase.storage
+                .from('files')
+                .download(file.storage_path);
+            if (error) {
+                console.warn(`Failed to download ${file.name}:`, error);
+                continue;
+            }
+
+            let fileName = file.name;
+            if (usedNames[fileName]) {
+                usedNames[fileName]++;
+                const parts = fileName.split('.');
+                if (parts.length > 1) {
+                    const ext = parts.pop();
+                    fileName = `${parts.join('.')}_${usedNames[fileName]}.${ext}`;
+                } else {
+                    fileName = `${fileName}_${usedNames[fileName]}`;
+                }
+            } else {
+                usedNames[fileName] = 1;
+            }
+
+            zip.file(fileName, data);
+            downloadedCount++;
+        } catch (err) {
+            console.warn(`Error adding ${file.name} to zip:`, err);
+        }
+
+        // Progress: 0-80% for downloads, 80-90% for zip generation
+        if (onProgress) onProgress(((i + 1) / total) * 0.8);
+    }
+
+    if (downloadedCount === 0) return { success: false, count: 0, error: 'No files could be downloaded' };
+
+    if (onProgress) onProgress(0.85);
+
+    const blob = await zip.generateAsync({
+        type: 'blob',
+        // Update progress during zip generation
+        onUpdate: (metadata) => {
+            if (onProgress) onProgress(0.85 + metadata.percent / 100 * 0.15);
+        }
+    });
+
+    if (onProgress) onProgress(1);
+
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = 'WBCS_Disk_files.zip';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+
+    return { success: true, count: downloadedCount };
 }

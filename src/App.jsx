@@ -12,6 +12,76 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
+import { Loader2 } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+
+// Global task state using window events (no context dependency)
+let _globalTaskId = 0;
+window._tasks = [];
+window._taskListeners = [];
+
+function notifyListeners() {
+  window._taskListeners.forEach(fn => fn([...window._tasks]));
+}
+
+window.addTask = function(type, title) {
+  const id = ++_globalTaskId;
+  window._tasks.push({ id, type, title, progress: 0, status: "running" });
+  notifyListeners();
+  return id;
+};
+
+window.updateTask = function(id, updates) {
+  const task = window._tasks.find(t => t.id === id);
+  if (task) {
+    Object.assign(task, updates);
+    notifyListeners();
+  }
+};
+
+window.removeTask = function(id) {
+  window._tasks = window._tasks.filter(t => t.id !== id);
+  notifyListeners();
+};
+
+// TaskBar component - listens to window events
+function TaskBar() {
+  const [tasks, setTasks] = useState([]);
+
+  useEffect(() => {
+    const listener = (newTasks) => setTasks(newTasks);
+    window._taskListeners.push(listener);
+    setTasks([...window._tasks]); // initial
+    return () => {
+      window._taskListeners = window._taskListeners.filter(fn => fn !== listener);
+    };
+  }, []);
+
+  const runningTasks = tasks.filter(t => t.status === "running");
+  if (runningTasks.length === 0) return null;
+
+  return (
+    <div className="fixed bottom-0 left-0 lg:left-64 right-0 z-50 bg-card/95 backdrop-blur-md border-t border-border shadow-2xl">
+      {runningTasks.map(task => (
+        <div key={task.id} className="px-4 sm:px-6 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              {task.title}
+            </span>
+            <span className="text-xs font-mono text-muted-foreground">{task.progress}%</span>
+          </div>
+          <div className="h-2 bg-secondary rounded-full overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-500 ease-out bg-primary"
+              style={{ width: `${task.progress}%` }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const pageVariants = {
   initial: { opacity: 0, y: 16 },
@@ -40,7 +110,6 @@ function AnimatedRoutes() {
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
-            {/* Add more protected routes here if needed */}
           </Route>
           <Route path="/" element={<Home />} />
           <Route path="*" element={<PageNotFound />} />
@@ -53,7 +122,6 @@ function AnimatedRoutes() {
 const AuthenticatedApp = () => {
   const { isLoadingAuth, authError, navigateToLogin } = useAuth();
 
-  // Show loading spinner while checking auth
   if (isLoadingAuth) {
     return (
       <div className="fixed inset-0 flex items-center justify-center">
@@ -62,7 +130,6 @@ const AuthenticatedApp = () => {
     );
   }
 
-  // Handle authentication errors
   if (authError) {
     if (authError.type === 'user_not_registered') {
       return <div className="fixed inset-0 flex items-center justify-center"><p>User not registered</p></div>;
@@ -84,6 +151,7 @@ function App() {
           <AuthenticatedApp />
         </Router>
         <Toaster />
+        <TaskBar />
       </QueryClientProvider>
     </AuthProvider>
   )

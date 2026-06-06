@@ -25,6 +25,18 @@ export function formatBytes(bytes) {
   return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
 }
 
+/** 파일명을 지정된 길이로 자르고 ... 추가 */
+export function truncateFileName(name, maxLength = 28) {
+  if (!name) return "";
+  // 확장자 분리
+  const dotIdx = name.lastIndexOf('.');
+  const ext = dotIdx > 0 ? name.slice(dotIdx) : '';
+  const base = dotIdx > 0 ? name.slice(0, dotIdx) : name;
+  if (name.length <= maxLength) return name;
+  const maxBase = Math.max(4, maxLength - ext.length - 3);
+  return base.slice(0, maxBase) + '...' + ext;
+}
+
 
 
 function useTogglePublish() {
@@ -70,7 +82,7 @@ function GridCard({ file, isManager, onDragStart, onContextMenu, selected, onSel
       data-selectable="true"
       data-id={file.id}
       onClick={(e) => { if (e.ctrlKey || e.metaKey || e.shiftKey) { e.preventDefault(); onSelect && onSelect(file.id, e.shiftKey); } }}
-      className={`group relative bg-card border rounded-2xl p-5 hover:shadow-lg transition-all duration-300 ${isManager ? "cursor-grab active:cursor-grabbing" : "cursor-default"} ${
+      className={`group relative bg-card border rounded-2xl p-5 hover:shadow-lg transition-all duration-300 flex-shrink-0 w-[240px] overflow-hidden ${isManager ? "cursor-grab active:cursor-grabbing" : "cursor-default"} ${
         selected ? "border-primary ring-2 ring-primary/30" : isHidden ? "border-amber-300 dark:border-amber-700 opacity-75" : "border-border hover:border-primary/20"
       }`}
     >
@@ -83,8 +95,8 @@ function GridCard({ file, isManager, onDragStart, onContextMenu, selected, onSel
           {selected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>}
         </div>
       </button>
-      <div className="flex items-start justify-between mb-4">
-        <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${color}`}>
+      <div className="flex items-start justify-between mb-4 min-w-0">
+        <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${color}`}>
           <Icon className="h-6 w-6" />
         </div>
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -94,8 +106,8 @@ function GridCard({ file, isManager, onDragStart, onContextMenu, selected, onSel
           </button>
         </div>
       </div>
-      <h3 className="font-medium text-sm truncate mb-1" title={file.name}>{file.name}</h3>
-      {file.description && <p className="text-xs text-muted-foreground truncate mb-3">{file.description}</p>}
+      <h3 className="font-medium text-sm truncate mb-1 min-w-0 overflow-hidden" title={file.name}>{truncateFileName(file.name)}</h3>
+      {file.description && <p className="text-xs text-muted-foreground truncate mb-3 min-w-0 overflow-hidden" title={file.description}>{file.description}</p>}
       <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-auto pt-3 border-t border-border">
         <span className="flex items-center gap-1"><HardDrive className="h-3 w-3" />{formatBytes(file.file_size)}</span>
         <span className="flex items-center gap-1">
@@ -122,7 +134,7 @@ function CompactCard({ file, isManager, onDragStart, onContextMenu, selected, on
       data-selectable="true"
       data-id={file.id}
       onClick={(e) => { if (e.ctrlKey || e.metaKey || e.shiftKey) { e.preventDefault(); onSelect && onSelect(file.id, e.shiftKey); } }}
-      className={`group relative bg-card border rounded-xl p-3 hover:shadow-md transition-all duration-200 flex flex-col items-center text-center gap-2 ${isManager ? "cursor-grab active:cursor-grabbing" : "cursor-default"} ${
+      className={`group relative bg-card border rounded-xl p-3 hover:shadow-md transition-all duration-200 flex flex-col items-center text-center gap-2 flex-shrink-0 w-[180px] overflow-hidden ${isManager ? "cursor-grab active:cursor-grabbing" : "cursor-default"} ${
         selected ? "border-primary ring-2 ring-primary/30" : isHidden ? "border-amber-300 dark:border-amber-700 opacity-75" : "border-border hover:border-primary/20"
       }`}
     >
@@ -138,7 +150,7 @@ function CompactCard({ file, isManager, onDragStart, onContextMenu, selected, on
         <Icon className="h-5 w-5" />
       </div>
       <div className="w-full">
-        <p className="text-xs font-medium truncate" title={file.name}>{file.name}</p>
+        <p className="text-xs font-medium truncate w-full min-w-0" title={file.name}>{truncateFileName(file.name, 22)}</p>
         <p className="text-[10px] text-muted-foreground">{formatBytes(file.file_size)}</p>
       </div>
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -182,8 +194,8 @@ function ListRow({ file, isManager, onDragStart, onContextMenu, selected, onSele
         <Icon className="h-4 w-4" />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium truncate">{file.name}</p>
-        {file.description && <p className="text-xs text-muted-foreground truncate">{file.description}</p>}
+        <p className="text-sm font-medium truncate min-w-0 overflow-hidden">{truncateFileName(file.name)}</p>
+        {file.description && <p className="text-xs text-muted-foreground truncate min-w-0 overflow-hidden">{file.description}</p>}
       </div>
       {isManager && isHidden && (
         <span className="text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1 flex-shrink-0">
