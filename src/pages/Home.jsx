@@ -38,22 +38,22 @@ export default function Home() {
   const [droppedFiles, setDroppedFiles] = useState(null);
   const dragCounterRef = useRef(0);
 
-  // Drag box selection (viewport-based for accuracy)
-  const [dragBox, setDragBox] = useState(null);
-  const dragBoxRef = useRef(null);
-  const dragStartRef = useRef(null);
-  const selectedIdsRef = useRef(selectedIds);
-  useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
+// Drag box selection (viewport-based for accuracy)
+const [dragBox, setDragBox] = useState(null);
+const dragBoxRef = useRef(null);
+const dragStartRef = useRef(null);
 
-  // Sorting
-  const [sortBy, setSortBy] = useState("created_at"); // "name" | "created_at" | "file_size"
-  const [sortOrder, setSortOrder] = useState("desc"); // "asc" | "desc"
+// Sorting
+const [sortBy, setSortBy] = useState("created_at");
+const [sortOrder, setSortOrder] = useState("desc");
 
-  // Pagination
-  const [currentPage, setCurrentPage] = useState(1);
+// Pagination
+const [currentPage, setCurrentPage] = useState(1);
 
-  // Multi-select
-  const [selectedIds, setSelectedIds] = useState(new Set());
+// Multi-select
+const [selectedIds, setSelectedIds] = useState(new Set());
+const selectedIdsRef = useRef(selectedIds);        
+useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]); 
   const [lastSelectedId, setLastSelectedId] = useState(null);
   const toggleSelect = useCallback((id, shiftKey) => {
     setSelectedIds(prev => {
@@ -326,7 +326,7 @@ export default function Home() {
       const box = dragBoxRef.current;
       if (box && box.width > 5 && box.height > 5) {
         const selectableEls = document.querySelectorAll('[data-selectable]');
-        const newSelected = new Set(selectedIdsRef.current);
+        const newSelected = new Set(selectedIdsRef.current || []);
         selectableEls.forEach((el) => {
           const elRect = el.getBoundingClientRect();
           if (
