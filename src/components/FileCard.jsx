@@ -1,6 +1,6 @@
 import { FileText, Image, Video, Music, Archive, File, Download, Calendar, HardDrive, Eye, EyeOff, CheckSquare } from "lucide-react";
 import { format } from "date-fns";
-import { base44 } from "@/api/base44Client";
+import { toggleFilePublished, handleDownload } from "@/api/fileService";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -25,22 +25,13 @@ export function formatBytes(bytes) {
   return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
 }
 
-export function handleDownload(file) {
-  const a = document.createElement("a");
-  a.href = file.file_url;
-  a.download = file.name;
-  a.target = "_blank";
-  a.rel = "noopener noreferrer";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-}
+
 
 function useTogglePublish() {
   const queryClient = useQueryClient();
   return async (file) => {
     const next = file.published === false ? true : false;
-    await base44.entities.File.update(file.id, { published: next });
+    await toggleFilePublished(file.id, next);
     toast.success(next ? "File is now visible to users." : "File is now hidden from users.");
     queryClient.invalidateQueries({ queryKey: ["files"] });
   };
@@ -76,7 +67,9 @@ function GridCard({ file, isManager, onDragStart, onContextMenu, selected, onSel
       draggable={isManager}
       onDragStart={onDragStart ? (e) => onDragStart(e, file) : undefined}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu && onContextMenu(e, file); }}
-      onClick={(e) => { if (e.ctrlKey || e.metaKey || e.shiftKey) { e.preventDefault(); onSelect && onSelect(file.id); } }}
+      data-selectable="true"
+      data-id={file.id}
+      onClick={(e) => { if (e.ctrlKey || e.metaKey || e.shiftKey) { e.preventDefault(); onSelect && onSelect(file.id, e.shiftKey); } }}
       className={`group relative bg-card border rounded-2xl p-5 hover:shadow-lg transition-all duration-300 ${isManager ? "cursor-grab active:cursor-grabbing" : "cursor-default"} ${
         selected ? "border-primary ring-2 ring-primary/30" : isHidden ? "border-amber-300 dark:border-amber-700 opacity-75" : "border-border hover:border-primary/20"
       }`}
@@ -107,7 +100,7 @@ function GridCard({ file, isManager, onDragStart, onContextMenu, selected, onSel
         <span className="flex items-center gap-1"><HardDrive className="h-3 w-3" />{formatBytes(file.file_size)}</span>
         <span className="flex items-center gap-1">
           <Calendar className="h-3 w-3" />
-          {file.created_date ? format(new Date(file.created_date), "MMM d, yyyy") : "—"}
+          {file.created_at ? format(new Date(file.created_at), "MMM d, yyyy") : "—"}
         </span>
         {isManager && isHidden && <span className="ml-auto flex items-center gap-1 text-amber-600 dark:text-amber-400"><EyeOff className="h-3 w-3" />Hidden</span>}
       </div>
@@ -126,7 +119,9 @@ function CompactCard({ file, isManager, onDragStart, onContextMenu, selected, on
       draggable={isManager}
       onDragStart={onDragStart ? (e) => onDragStart(e, file) : undefined}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu && onContextMenu(e, file); }}
-      onClick={(e) => { if (e.ctrlKey || e.metaKey || e.shiftKey) { e.preventDefault(); onSelect && onSelect(file.id); } }}
+      data-selectable="true"
+      data-id={file.id}
+      onClick={(e) => { if (e.ctrlKey || e.metaKey || e.shiftKey) { e.preventDefault(); onSelect && onSelect(file.id, e.shiftKey); } }}
       className={`group relative bg-card border rounded-xl p-3 hover:shadow-md transition-all duration-200 flex flex-col items-center text-center gap-2 ${isManager ? "cursor-grab active:cursor-grabbing" : "cursor-default"} ${
         selected ? "border-primary ring-2 ring-primary/30" : isHidden ? "border-amber-300 dark:border-amber-700 opacity-75" : "border-border hover:border-primary/20"
       }`}
@@ -167,7 +162,9 @@ function ListRow({ file, isManager, onDragStart, onContextMenu, selected, onSele
       draggable={isManager}
       onDragStart={onDragStart ? (e) => onDragStart(e, file) : undefined}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu && onContextMenu(e, file); }}
-      onClick={(e) => { if (e.ctrlKey || e.metaKey || e.shiftKey) { e.preventDefault(); onSelect && onSelect(file.id); } }}
+      data-selectable="true"
+      data-id={file.id}
+      onClick={(e) => { if (e.ctrlKey || e.metaKey || e.shiftKey) { e.preventDefault(); onSelect && onSelect(file.id, e.shiftKey); } }}
       className={`group flex items-center gap-3 px-4 py-2.5 bg-card border-b border-border hover:bg-secondary/40 transition-colors ${isManager ? "cursor-grab active:cursor-grabbing" : "cursor-default"} ${
         selected ? "bg-primary/5" : isHidden ? "opacity-75" : ""
       }`}
@@ -195,7 +192,7 @@ function ListRow({ file, isManager, onDragStart, onContextMenu, selected, onSele
       )}
       <span className="text-xs text-muted-foreground w-20 text-right flex-shrink-0">{formatBytes(file.file_size)}</span>
       <span className="text-xs text-muted-foreground w-28 text-right flex-shrink-0 hidden sm:block">
-        {file.created_date ? format(new Date(file.created_date), "MMM d, yyyy") : "—"}
+        {file.created_at ? format(new Date(file.created_at), "MMM d, yyyy") : "—"}
       </span>
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-2 flex-shrink-0">
         {isManager && <PublishToggle file={file} small />}

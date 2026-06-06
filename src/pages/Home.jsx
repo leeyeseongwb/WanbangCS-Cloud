@@ -1,48 +1,89 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
 import { getSession, clearSession } from "@/lib/auth";
+import { listFiles, listFolders, deleteFolder, deleteFile, updateFolder, moveFileToFolder, handleDownload } from "@/api/fileService";
 import Sidebar from "@/components/Sidebar";
 import MobileSidebar from "@/components/MobileSidebar";
 import SearchBar from "@/components/SearchBar";
-import FileCard, { handleDownload } from "@/components/FileCard";
+import FileCard from "@/components/FileCard";
 import FolderCard from "@/components/FolderCard";
 import UploadDialog from "@/components/UploadDialog";
 import CreateFolderDialog from "@/components/CreateFolderDialog";
+import EditFileDialog from "@/components/EditFileDialog";
+import EditFolderDialog from "@/components/EditFolderDialog";
+import FolderInfoDialog from "@/components/FolderInfoDialog";
 import EmptyState from "@/components/EmptyState";
 import DarkModeToggle from "@/components/DarkModeToggle";
 import ViewToggle from "@/components/ViewToggle";
 import ContextMenu from "@/components/ContextMenu";
-import AuthPage from "./AuthPage";
-import { Loader2, HardDrive, ChevronRight, Home as HomeIcon, Upload, Download, X } from "lucide-react";
+import {
+  Loader2, HardDrive, ChevronRight, Home as HomeIcon, Upload, Download, X, Trash2, Pencil, ArrowUpDown, ChevronLeft, ChevronRight as ChevronRightIcon, Info
+} from "lucide-react";
 import { toast } from "sonner";
+
+const PAGE_SIZE = 20;
 
 export default function Home() {
   const [category, setCategory] = useState("all");
   const [search, setSearch] = useState("");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [editFileOpen, setEditFileOpen] = useState(false);
+  const [editFolderOpen, setEditFolderOpen] = useState(false);
+  const [folderInfoOpen, setFolderInfoOpen] = useState(false);
   const [currentFolder, setCurrentFolder] = useState(null);
-  const [view, setView] = useState("grid"); // "grid" | "list" | "compact"
-  const [showAuth, setShowAuth] = useState(false);
+  const [view, setView] = useState("grid");
   const [dragOverFolderId, setDragOverFolderId] = useState(null);
   const [globalDragOver, setGlobalDragOver] = useState(false);
-  const [droppedFile, setDroppedFile] = useState(null);
-  const dragCounterRef = useState(0);
+  const [droppedFiles, setDroppedFiles] = useState(null);
+  const dragCounterRef = useRef(0);
+
+  // Drag box selection (viewport-based for accuracy)
+  const [dragBox, setDragBox] = useState(null);
+  const dragBoxRef = useRef(null);
+  const dragStartRef = useRef(null);
+  const selectedIdsRef = useRef(selectedIds);
+  useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
+
+  // Sorting
+  const [sortBy, setSortBy] = useState("created_at"); // "name" | "created_at" | "file_size"
+  const [sortOrder, setSortOrder] = useState("desc"); // "asc" | "desc"
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Multi-select
   const [selectedIds, setSelectedIds] = useState(new Set());
-  const toggleSelect = useCallback((id) => {
+  const [lastSelectedId, setLastSelectedId] = useState(null);
+  const toggleSelect = useCallback((id, shiftKey) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
+      if (shiftKey && lastSelectedId) {
+        // Find all file IDs in current view
+        const idsInView = filteredFileIds;
+        const idx1 = idsInView.indexOf(lastSelectedId);
+        const idx2 = idsInView.indexOf(id);
+        if (idx1 !== -1 && idx2 !== -1) {
+          const [start, end] = idx1 < idx2 ? [idx1, idx2] : [idx2, idx1];
+          for (let i = start; i <= end; i++) {
+            next.add(idsInView[i]);
+          }
+          return next;
+        }
+      }
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
-  }, []);
-  const clearSelection = () => setSelectedIds(new Set());
+    setLastSelectedId(id);
+  }, [lastSelectedId]);
+  const clearSelection = useCallback(() => { setSelectedIds(new Set()); setLastSelectedId(null); }, []);
+
+  const [editingFile, setEditingFile] = useState(null);
+  const [editingFolder, setEditingFolder] = useState(null);
+  const [infoFolder, setInfoFolder] = useState(null);
 
   // Context menu
-  const [contextMenu, setContextMenu] = useState(null); // { x, y, items }
+  const [contextMenu, setContextMenu] = useState(null);
   const openContextMenu = useCallback((e, items) => {
     e.preventDefault();
     setContextMenu({ x: e.clientX, y: e.clientY, items });
@@ -58,24 +99,19 @@ export default function Home() {
 
   const { data: files = [], isLoading: loadingFiles } = useQuery({
     queryKey: ["files"],
-    queryFn: () => base44.entities.File.list("-created_date", 500),
+    queryFn: listFiles,
   });
 
   const { data: folders = [], isLoading: loadingFolders } = useQuery({
     queryKey: ["folders"],
-    queryFn: () => base44.entities.Folder.list("-created_date", 200),
+    queryFn: listFolders,
   });
 
   const isLoading = loadingFiles || loadingFolders;
 
-  const visibleFolders = useMemo(() => {
-    if (search.trim() || currentFolder) return [];
-    return folders;
-  }, [folders, currentFolder, search]);
-
+  // Filtered & sorted files
   const filteredFiles = useMemo(() => {
     let result = files;
-    // Non-managers cannot see hidden files
     if (!isManager) result = result.filter((f) => f.published !== false);
     if (currentFolder) {
       result = result.filter((f) => f.folder_id === currentFolder.id);
@@ -93,55 +129,131 @@ export default function Home() {
           (f.name?.toLowerCase().includes(q) || f.description?.toLowerCase().includes(q))
       );
     }
+    // Sort
+    result.sort((a, b) => {
+      let valA = a[sortBy] || "";
+      let valB = b[sortBy] || "";
+      if (typeof valA === "string") valA = valA.toLowerCase();
+      if (typeof valB === "string") valB = valB.toLowerCase();
+      if (valA < valB) return sortOrder === "asc" ? -1 : 1;
+      if (valA > valB) return sortOrder === "asc" ? 1 : -1;
+      return 0;
+    });
     return result;
-  }, [files, folders, currentFolder, category, search, isManager]);
+  }, [files, folders, currentFolder, category, search, isManager, sortBy, sortOrder]);
+
+  const filteredFileIds = useMemo(() => filteredFiles.map(f => f.id), [filteredFiles]);
+
+  const visibleFolders = useMemo(() => {
+    if (search.trim() || currentFolder) return [];
+    return folders;
+  }, [folders, currentFolder, search]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredFiles.length / PAGE_SIZE));
+  const paginatedFiles = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filteredFiles.slice(start, start + PAGE_SIZE);
+  }, [filteredFiles, currentPage]);
+
+  // Reset page when filters change
+  useEffect(() => { setCurrentPage(1); }, [search, category, currentFolder, sortBy, sortOrder]);
 
   const fileCountForFolder = (folderId) => files.filter((f) => f.folder_id === folderId).length;
+  const folderTotalSize = (folderId) => files.filter((f) => f.folder_id === folderId).reduce((sum, f) => sum + (f.file_size || 0), 0);
 
   const handleFileContextMenu = useCallback((e, file) => {
-    openContextMenu(e, [
+    const items = [
       { icon: Download, label: "Download", onClick: () => handleDownload(file) },
-    ]);
-  }, [openContextMenu]);
+    ];
+    if (isManager) {
+      items.push(
+        { icon: Pencil, label: "Edit", onClick: () => { setEditingFile(file); setEditFileOpen(true); } },
+        { icon: Trash2, label: "Delete", onClick: () => handleDeleteFile(file) },
+      );
+    }
+    openContextMenu(e, items);
+  }, [openContextMenu, isManager]);
 
   const handleFolderContextMenu = useCallback((e, folder) => {
     const folderFiles = files.filter(f => f.folder_id === folder.id);
-    openContextMenu(e, [
+    const items = [
+      { icon: Info, label: "Folder Info", onClick: () => { setInfoFolder(folder); setFolderInfoOpen(true); } },
       {
         icon: Download,
         label: `Download all files (${folderFiles.length})`,
-        onClick: () => {
+        onClick: async () => {
           if (folderFiles.length === 0) { toast.info("This folder has no files."); return; }
-          folderFiles.forEach((f, i) => setTimeout(() => handleDownload(f), i * 300));
-          toast.success(`Downloading ${folderFiles.length} file(s)…`);
+          for (const f of folderFiles) {
+            try { await handleDownload(f); } catch (e) { console.warn(e); }
+            await new Promise(r => setTimeout(r, 300));
+          }
+          toast.success(`Downloaded ${folderFiles.length} file(s)…`);
         },
       },
-    ]);
-  }, [files, openContextMenu]);
+    ];
+    if (isManager) {
+      items.push(
+        { icon: Pencil, label: "Edit Folder", onClick: () => { setEditingFolder(folder); setEditFolderOpen(true); } },
+        { icon: Trash2, label: "Delete Folder", onClick: () => handleDeleteFolder(folder) },
+      );
+    }
+    openContextMenu(e, items);
+  }, [files, openContextMenu, isManager]);
 
-  const handleBulkDownload = () => {
-    const toDownload = filteredFiles.filter(f => selectedIds.has(f.id));
-    toDownload.forEach((f, i) => setTimeout(() => handleDownload(f), i * 300));
-    toast.success(`Downloading ${toDownload.length} file(s)…`);
+  const handleDeleteFile = async (file) => {
+    try {
+      await deleteFile(file);
+      toast.success("File deleted");
+      queryClient.invalidateQueries({ queryKey: ["files"] });
+      clearSelection();
+    } catch (err) {
+      toast.error(err.message || "Failed to delete file");
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    const toDelete = filteredFiles.filter(f => selectedIds.has(f.id));
+    if (toDelete.length === 0) return;
+    if (!confirm(`Delete ${toDelete.length} file(s)? This cannot be undone.`)) return;
+    for (const file of toDelete) {
+      try { await deleteFile(file); } catch (e) { console.warn(e); }
+    }
+    toast.success(`${toDelete.length} file(s) deleted`);
+    queryClient.invalidateQueries({ queryKey: ["files"] });
     clearSelection();
   };
 
   const handleDeleteFolder = async (folder) => {
     const count = fileCountForFolder(folder.id);
     if (count > 0) { toast.error(`Folder has ${count} file(s). Move or delete them first.`); return; }
-    await base44.entities.Folder.delete(folder.id);
-    toast.success("Folder deleted");
-    queryClient.invalidateQueries({ queryKey: ["folders"] });
+    try {
+      await deleteFolder(folder.id);
+      toast.success("Folder deleted");
+      queryClient.invalidateQueries({ queryKey: ["folders"] });
+    } catch (err) {
+      toast.error(err.message || "Failed to delete folder");
+    }
+  };
+
+  const handleBulkDownload = async () => {
+    const toDownload = filteredFiles.filter(f => selectedIds.has(f.id));
+    if (toDownload.length === 0) return;
+    for (const f of toDownload) {
+      try { await handleDownload(f); } catch (e) { console.warn(e); }
+      await new Promise(r => setTimeout(r, 300));
+    }
+    toast.success(`Downloaded ${toDownload.length} file(s)…`);
+    clearSelection();
   };
 
   const handleCategoryChange = (cat) => {
-    setCategory(cat); setCurrentFolder(null); setSearch("");
+    setCategory(cat); setCurrentFolder(null); setSearch(""); clearSelection();
   };
 
-  const invalidateAll = () => {
+  const invalidateAll = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["files"] });
     queryClient.invalidateQueries({ queryKey: ["folders"] });
-  };
+  }, [queryClient]);
 
   const handleLogout = () => {
     clearSession();
@@ -149,15 +261,14 @@ export default function Home() {
     toast.success("Logged out");
   };
 
-  const handleAuthSuccess = (username) => {
-    setSession(getSession());
-    setShowAuth(false);
-  };
-
   // Drag & drop handlers
   const handleDragStart = useCallback((e, file) => {
-    e.dataTransfer.setData("fileId", file.id);
-  }, []);
+    const idsToMove = selectedIds.has(file.id) && selectedIds.size > 1
+      ? Array.from(selectedIds)
+      : [file.id];
+    e.dataTransfer.setData("fileIds", JSON.stringify(idsToMove));
+    e.dataTransfer.effectAllowed = "move";
+  }, [selectedIds]);
 
   const handleDragOver = useCallback((e, folderId) => {
     e.preventDefault();
@@ -171,11 +282,74 @@ export default function Home() {
   const handleDrop = useCallback(async (e, targetFolder) => {
     e.preventDefault();
     setDragOverFolderId(null);
-    const fileId = e.dataTransfer.getData("fileId");
-    if (!fileId) return;
-    await base44.entities.File.update(fileId, { folder_id: targetFolder.id });
-    toast.success(`Moved to "${targetFolder.name}"`);
-    invalidateAll();
+    const raw = e.dataTransfer.getData("fileIds");
+    if (!raw) return;
+    let ids = [];
+    try { ids = JSON.parse(raw); } catch { ids = [raw]; }
+    if (!ids.length) return;
+    try {
+      for (const fileId of ids) {
+        await moveFileToFolder(fileId, targetFolder.id);
+      }
+      toast.success(`Moved ${ids.length} file(s) to "${targetFolder.name}"`);
+      invalidateAll();
+    } catch (err) {
+      toast.error(err.message || "Failed to move file(s)");
+    }
+  }, [invalidateAll]);
+
+  // Drag box selection handler
+  const handleMouseDown = useCallback((e) => {
+    if (e.button !== 0 || e.target.closest('[data-selectable]') || e.target.closest('button') || e.target.closest('a') || e.target.closest('[role="menu"]')) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    dragStartRef.current = { x: startX, y: startY };
+    dragBoxRef.current = { left: startX, top: startY, width: 0, height: 0 };
+    setDragBox({ left: startX, top: startY, width: 0, height: 0 });
+
+    const handleMouseMove = (moveEvent) => {
+      if (!dragStartRef.current) return;
+      const currentX = moveEvent.clientX;
+      const currentY = moveEvent.clientY;
+      const box = {
+        left: Math.min(dragStartRef.current.x, currentX),
+        top: Math.min(dragStartRef.current.y, currentY),
+        width: Math.abs(currentX - dragStartRef.current.x),
+        height: Math.abs(currentY - dragStartRef.current.y),
+      };
+      dragBoxRef.current = box;
+      setDragBox(box);
+    };
+
+    const handleMouseUp = () => {
+      const box = dragBoxRef.current;
+      if (box && box.width > 5 && box.height > 5) {
+        const selectableEls = document.querySelectorAll('[data-selectable]');
+        const newSelected = new Set(selectedIdsRef.current);
+        selectableEls.forEach((el) => {
+          const elRect = el.getBoundingClientRect();
+          if (
+            elRect.left < box.left + box.width &&
+            elRect.right > box.left &&
+            elRect.top < box.top + box.height &&
+            elRect.bottom > box.top
+          ) {
+            const id = el.dataset.id;
+            if (id) newSelected.add(id);
+          }
+        });
+        setSelectedIds(newSelected);
+      }
+      dragStartRef.current = null;
+      dragBoxRef.current = null;
+      setDragBox(null);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
   }, []);
 
   const showEmpty = !isLoading && visibleFolders.length === 0 && filteredFiles.length === 0;
@@ -183,32 +357,26 @@ export default function Home() {
   // Global drag-and-drop for managers
   const handleGlobalDragEnter = (e) => {
     if (!isManager) return;
-    // Only react to file drags (not folder-to-folder moves)
     if (!e.dataTransfer.types.includes("Files")) return;
-    dragCounterRef[0]++;
-    setGlobalDragOver(true);
+    dragCounterRef.current++;
+    if (dragCounterRef.current === 1) setGlobalDragOver(true);
   };
   const handleGlobalDragLeave = () => {
     if (!isManager) return;
-    dragCounterRef[0]--;
-    if (dragCounterRef[0] <= 0) { dragCounterRef[0] = 0; setGlobalDragOver(false); }
+    dragCounterRef.current--;
+    if (dragCounterRef.current <= 0) { dragCounterRef.current = 0; setGlobalDragOver(false); }
   };
   const handleGlobalDrop = (e) => {
     if (!isManager) return;
     e.preventDefault();
-    dragCounterRef[0] = 0;
+    dragCounterRef.current = 0;
     setGlobalDragOver(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) { setDroppedFile(file); setUploadOpen(true); }
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length > 0) { setDroppedFiles(files); setUploadOpen(true); }
   };
   const handleGlobalDragOver = (e) => { if (isManager && e.dataTransfer.types.includes("Files")) e.preventDefault(); };
 
-  // Reset selection when folder/category/search changes
   const handleCategoryChangeWithReset = (cat) => { clearSelection(); handleCategoryChange(cat); };
-
-  if (showAuth) {
-    return <AuthPage onSuccess={handleAuthSuccess} onBack={() => setShowAuth(false)} />;
-  }
 
   const sidebarProps = {
     activeCategory: category,
@@ -217,7 +385,7 @@ export default function Home() {
     onNewFolderClick: () => setFolderDialogOpen(true),
     isManager,
     managerName,
-    onLoginClick: () => setShowAuth(true),
+    onLoginClick: () => window.location.href = '/login',
     onLogout: handleLogout,
   };
 
@@ -254,8 +422,39 @@ export default function Home() {
         {/* Top bar */}
         <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-md border-b border-border px-4 sm:px-6 lg:px-8 py-4 flex items-center gap-3">
           <MobileSidebar {...sidebarProps} />
-          <SearchBar value={search} onChange={setSearch} />
+          <SearchBar value={search} onChange={(v) => { setSearch(v); setCurrentPage(1); }} />
           <div className="ml-auto flex items-center gap-2">
+            {/* Sort toggle */}
+            <button
+              onClick={() => {
+                if (sortBy === "name") setSortOrder(prev => prev === "asc" ? "desc" : "asc");
+                else { setSortBy("name"); setSortOrder("asc"); }
+              }}
+              className={`hidden sm:flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full transition-colors ${sortBy === "name" ? "bg-primary text-primary-foreground" : "bg-secondary/60 text-muted-foreground hover:bg-secondary"}`}
+            >
+              <ArrowUpDown className="h-3 w-3" />
+              Name
+            </button>
+            <button
+              onClick={() => {
+                if (sortBy === "created_at") setSortOrder(prev => prev === "asc" ? "desc" : "asc");
+                else { setSortBy("created_at"); setSortOrder("desc"); }
+              }}
+              className={`hidden sm:flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full transition-colors ${sortBy === "created_at" ? "bg-primary text-primary-foreground" : "bg-secondary/60 text-muted-foreground hover:bg-secondary"}`}
+            >
+              <ArrowUpDown className="h-3 w-3" />
+              Date
+            </button>
+            <button
+              onClick={() => {
+                if (sortBy === "file_size") setSortOrder(prev => prev === "asc" ? "desc" : "asc");
+                else { setSortBy("file_size"); setSortOrder("desc"); }
+              }}
+              className={`hidden sm:flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full transition-colors ${sortBy === "file_size" ? "bg-primary text-primary-foreground" : "bg-secondary/60 text-muted-foreground hover:bg-secondary"}`}
+            >
+              <ArrowUpDown className="h-3 w-3" />
+              Size
+            </button>
             <ViewToggle view={view} onChange={setView} />
             <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground bg-secondary/60 px-3 py-1.5 rounded-full">
               <HardDrive className="h-3.5 w-3.5" />
@@ -265,7 +464,7 @@ export default function Home() {
           </div>
         </header>
 
-        {/* Bulk download bar */}
+        {/* Bulk action bar */}
         {selectedIds.size > 0 && (
           <div className="sticky top-[73px] z-10 bg-primary text-primary-foreground px-4 sm:px-6 lg:px-8 py-2.5 flex items-center gap-3">
             <span className="text-sm font-medium">{selectedIds.size} file{selectedIds.size !== 1 ? "s" : ""} selected</span>
@@ -274,8 +473,17 @@ export default function Home() {
               className="flex items-center gap-1.5 bg-primary-foreground/20 hover:bg-primary-foreground/30 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
             >
               <Download className="h-4 w-4" />
-              Download selected
+              Download
             </button>
+            {isManager && (
+              <button
+                onClick={handleBulkDelete}
+                className="flex items-center gap-1.5 bg-destructive/80 hover:bg-destructive px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+              >
+                <Trash2 className="h-4 w-4" />
+                Delete
+              </button>
+            )}
             <button onClick={clearSelection} className="ml-auto p-1.5 rounded-lg hover:bg-primary-foreground/20 transition-colors">
               <X className="h-4 w-4" />
             </button>
@@ -283,11 +491,24 @@ export default function Home() {
         )}
 
         {/* Content */}
-        <div className="px-4 sm:px-6 lg:px-8 py-6">
+        <div className="px-4 sm:px-6 lg:px-8 py-6 select-none" onMouseDown={handleMouseDown}>
+          {/* Drag selection box (viewport-based, fixed position) */}
+          {dragBox && (
+            <div
+              className="fixed border-2 border-primary bg-primary/10 pointer-events-none z-50 rounded-md"
+              style={{
+                left: dragBox.left,
+                top: dragBox.top,
+                width: dragBox.width,
+                height: dragBox.height,
+              }}
+            />
+          )}
+
           {/* Breadcrumb */}
           <div className="flex items-center gap-1.5 text-sm mb-5">
             <button
-              onClick={() => setCurrentFolder(null)}
+              onClick={() => { setCurrentFolder(null); clearSelection(); }}
               className={`flex items-center gap-1 hover:text-primary transition-colors ${!currentFolder ? "text-foreground font-medium" : "text-muted-foreground"}`}
             >
               <HomeIcon className="h-3.5 w-3.5" />
@@ -302,16 +523,18 @@ export default function Home() {
           </div>
 
           {/* Heading */}
-          <div className="mb-5">
-            <h2 className="text-2xl font-semibold font-heading">
-              {search ? `Results for "${search}"` : currentFolder ? currentFolder.name : category === "all" ? "All Files" : category.charAt(0).toUpperCase() + category.slice(1) + "s"}
-            </h2>
-            <p className="text-sm text-muted-foreground mt-1">
-              {!search && !currentFolder && visibleFolders.length > 0 && (
-                <span>{visibleFolders.length} folder{visibleFolders.length !== 1 ? "s" : ""} · </span>
-              )}
-              {filteredFiles.length} file{filteredFiles.length !== 1 ? "s" : ""}
-            </p>
+          <div className="mb-5 flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-semibold font-heading">
+                {search ? `Results for "${search}"` : currentFolder ? currentFolder.name : category === "all" ? "All Files" : category.charAt(0).toUpperCase() + category.slice(1) + "s"}
+              </h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                {!search && !currentFolder && visibleFolders.length > 0 && (
+                  <span>{visibleFolders.length} folder{visibleFolders.length !== 1 ? "s" : ""} · </span>
+                )}
+                {filteredFiles.length} file{filteredFiles.length !== 1 ? "s" : ""}
+              </p>
+            </div>
           </div>
 
           {isLoading ? (
@@ -334,7 +557,8 @@ export default function Home() {
                           folder={folder}
                           fileCount={fileCountForFolder(folder.id)}
                           onClick={() => { clearSelection(); setCurrentFolder(folder); setCategory("all"); }}
-                          onDelete={handleDeleteFolder}
+                          onDelete={isManager ? handleDeleteFolder : undefined}
+                          onEdit={isManager ? () => { setEditingFolder(folder); setEditFolderOpen(true); } : undefined}
                           isManager={isManager}
                           view="list"
                           onDragOver={(e) => handleDragOver(e, folder.id)}
@@ -355,7 +579,8 @@ export default function Home() {
                             folder={folder}
                             fileCount={fileCountForFolder(folder.id)}
                             onClick={() => { clearSelection(); setCurrentFolder(folder); setCategory("all"); }}
-                            onDelete={handleDeleteFolder}
+                            onDelete={isManager ? handleDeleteFolder : undefined}
+                            onEdit={isManager ? () => { setEditingFolder(folder); setEditFolderOpen(true); } : undefined}
                             isManager={isManager}
                             view={view}
                             onDragOver={(e) => handleDragOver(e, folder.id)}
@@ -370,7 +595,7 @@ export default function Home() {
               )}
 
               {/* Files */}
-              {filteredFiles.length > 0 && (
+              {paginatedFiles.length > 0 && (
                 <div>
                   {view !== "list" && visibleFolders.length > 0 && (
                     <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Files</p>
@@ -385,17 +610,40 @@ export default function Home() {
                         <div className="w-28 text-right flex-shrink-0 hidden sm:block">Date</div>
                         <div className="w-8 flex-shrink-0" />
                       </div>
-                      {filteredFiles.map((file) => (
-                        <FileCard key={file.id} file={file} view="list" isManager={isManager} onDragStart={handleDragStart} onContextMenu={handleFileContextMenu} selected={selectedIds.has(file.id)} onSelect={toggleSelect} />
+                      {paginatedFiles.map((file) => (
+                        <FileCard key={file.id} file={file} view="list" isManager={isManager} onDragStart={handleDragStart} onContextMenu={handleFileContextMenu} selected={selectedIds.has(file.id)} onSelect={(id, shift) => toggleSelect(id, shift)} />
                       ))}
                     </div>
                   ) : (
                     <div className={`grid gap-4 ${view === "compact" ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6" : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"}`}>
-                      {filteredFiles.map((file) => (
-                        <FileCard key={file.id} file={file} view={view} isManager={isManager} onDragStart={handleDragStart} onContextMenu={handleFileContextMenu} selected={selectedIds.has(file.id)} onSelect={toggleSelect} />
+                      {paginatedFiles.map((file) => (
+                        <FileCard key={file.id} file={file} view={view} isManager={isManager} onDragStart={handleDragStart} onContextMenu={handleFileContextMenu} selected={selectedIds.has(file.id)} onSelect={(id, shift) => toggleSelect(id, shift)} />
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-center gap-2 mt-8">
+                  <button
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="p-2 rounded-lg border border-border hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <span className="text-sm text-muted-foreground">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="p-2 rounded-lg border border-border hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <ChevronRightIcon className="h-4 w-4" />
+                  </button>
                 </div>
               )}
 
@@ -409,15 +657,34 @@ export default function Home() {
 
       <UploadDialog
         open={uploadOpen}
-        onOpenChange={(val) => { setUploadOpen(val); if (!val) setDroppedFile(null); }}
+        onOpenChange={(val) => { setUploadOpen(val); if (!val) setDroppedFiles(null); }}
         onUploaded={invalidateAll}
         currentFolderId={currentFolder?.id || null}
-        initialFile={droppedFile}
+        initialFiles={droppedFiles}
       />
       <CreateFolderDialog
         open={folderDialogOpen}
         onOpenChange={setFolderDialogOpen}
         onCreated={invalidateAll}
+      />
+      <EditFileDialog
+        open={editFileOpen}
+        onOpenChange={setEditFileOpen}
+        file={editingFile}
+        onUpdated={invalidateAll}
+      />
+      <EditFolderDialog
+        open={editFolderOpen}
+        onOpenChange={setEditFolderOpen}
+        folder={editingFolder}
+        onUpdated={invalidateAll}
+      />
+      <FolderInfoDialog
+        open={folderInfoOpen}
+        onOpenChange={setFolderInfoOpen}
+        folder={infoFolder}
+        fileCount={infoFolder ? fileCountForFolder(infoFolder.id) : 0}
+        totalSize={infoFolder ? folderTotalSize(infoFolder.id) : 0}
       />
     </div>
   );

@@ -1,4 +1,4 @@
-import { Folder, MoreVertical, Trash2, Download } from "lucide-react";
+import { Folder, MoreVertical, Trash2, Pencil } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,7 +16,7 @@ const colorMap = {
 };
 
 // Grid folder card
-function GridFolder({ folder, fileCount, onClick, onDelete, isManager, onDragOver, onDrop, onContextMenu }) {
+function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, isManager, onDragOver, onDrop, onContextMenu }) {
   const c = colorMap[folder.color || "blue"];
   return (
     <div
@@ -39,6 +39,11 @@ function GridFolder({ folder, fileCount, onClick, onDelete, isManager, onDragOve
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {onEdit && (
+                  <DropdownMenuItem onClick={() => onEdit(folder)}>
+                    <Pencil className="h-4 w-4 mr-2" />Edit Folder
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => onDelete(folder)}>
                   <Trash2 className="h-4 w-4 mr-2" />Delete Folder
                 </DropdownMenuItem>
@@ -55,7 +60,7 @@ function GridFolder({ folder, fileCount, onClick, onDelete, isManager, onDragOve
 }
 
 // Compact folder
-function CompactFolder({ folder, fileCount, onClick, onDelete, isManager, onDragOver, onDrop, onContextMenu }) {
+function CompactFolder({ folder, fileCount, onClick, onDelete, onEdit, isManager, onDragOver, onDrop, onContextMenu }) {
   const c = colorMap[folder.color || "blue"];
   return (
     <div
@@ -75,7 +80,7 @@ function CompactFolder({ folder, fileCount, onClick, onDelete, isManager, onDrag
 }
 
 // List folder row
-function ListFolder({ folder, fileCount, onClick, onDelete, isManager, onDragOver, onDrop, onContextMenu }) {
+function ListFolder({ folder, fileCount, onClick, onDelete, onEdit, isManager, onDragOver, onDrop, onContextMenu }) {
   const c = colorMap[folder.color || "blue"];
   return (
     <div
@@ -102,6 +107,11 @@ function ListFolder({ folder, fileCount, onClick, onDelete, isManager, onDragOve
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {onEdit && (
+                <DropdownMenuItem onClick={() => onEdit(folder)}>
+                  <Pencil className="h-4 w-4 mr-2" />Edit Folder
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => onDelete(folder)}>
                 <Trash2 className="h-4 w-4 mr-2" />Delete Folder
               </DropdownMenuItem>
@@ -113,8 +123,8 @@ function ListFolder({ folder, fileCount, onClick, onDelete, isManager, onDragOve
   );
 }
 
-export default function FolderCard({ folder, fileCount, onClick, onDelete, isManager, view = "grid", onDragOver, onDrop, onContextMenu }) {
-  const props = { folder, fileCount, onClick, onDelete, isManager, onDragOver, onDrop, onContextMenu };
+export default function FolderCard({ folder, fileCount, onClick, onDelete, onEdit, isManager, view = "grid", onDragOver, onDrop, onContextMenu }) {
+  const props = { folder, fileCount, onClick, onDelete, onEdit, isManager, onDragOver, onDrop, onContextMenu };
   if (view === "list") return <ListFolder {...props} />;
   if (view === "compact") return <CompactFolder {...props} />;
   return <GridFolder {...props} />;

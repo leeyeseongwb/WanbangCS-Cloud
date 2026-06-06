@@ -11,8 +11,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { FolderPlus } from "lucide-react";
-import { base44 } from "@/api/base44Client";
 import { toast } from "sonner";
+import { createFolder } from "@/api/fileService";
 
 const COLORS = [
   { key: "blue",    label: "Blue",    cls: "bg-blue-500" },
@@ -32,14 +32,19 @@ export default function CreateFolderDialog({ open, onOpenChange, onCreated }) {
   const handleCreate = async () => {
     if (!name.trim()) return;
     setLoading(true);
-    await base44.entities.Folder.create({ name: name.trim(), description, color });
-    toast.success("Folder created!");
-    setLoading(false);
-    setName("");
-    setDescription("");
-    setColor("blue");
-    onOpenChange(false);
-    onCreated?.();
+    try {
+      await createFolder({ name: name.trim(), description, color });
+      toast.success("Folder created!");
+      setName("");
+      setDescription("");
+      setColor("blue");
+      onOpenChange(false);
+      onCreated?.();
+    } catch (err) {
+      toast.error(err.message || "Failed to create folder.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleClose = (open) => {
