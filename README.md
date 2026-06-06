@@ -86,6 +86,15 @@ The progress bar at the bottom now has an **X (cancel)** button:
 - **Upload:** pressing X stops the upload. Any files **already uploaded in that batch are automatically deleted**, so nothing partial is left behind.
 - **Download (ZIP / folder):** pressing X cancels the ZIP build before it is saved.
 
+## 🗂️ Move files & folders (managers)
+
+Managers can reorganize the tree by **drag & drop**:
+
+- **Into a folder:** drag a file or folder onto another folder card to move it inside.
+- **Up to a parent / root:** the path bar (breadcrumb) at the top is now a drop zone. Drag an item onto any crumb — e.g. **WBCS Cloud** (top level) or any parent folder name — and release to move it up to that level.
+
+The breadcrumb shows the **full path** (e.g. `WBCS Cloud › Folder 1 › Folder 1-a`), so you can drop onto any ancestor. Moving a folder into itself or one of its own subfolders is blocked automatically to prevent loops.
+
 ## 📂 Folder Download keeps subfolder structure
 
 Downloading a folder produces a single `.zip` that **preserves the original subfolder tree**. For example, downloading `Folder 1` yields:

@@ -302,6 +302,54 @@ export async function moveFileToFolder(fileId, folderId) {
     return data
 }
 
+// Returns true if `candidateAncestorId` is `folderId` itself or one of its descendants.
+// Used to prevent moving a folder into its own subtree (which would create a cycle).
+function isSelfOrDescendant(allFolders, folderId, candidateAncestorId) {
+    if (!candidateAncestorId) return false; // moving to root is always safe
+    if (folderId === candidateAncestorId) return true;
+
+    const byParent = new Map();
+    for (const f of allFolders) {
+        const key = f.parent_folder_id || null;
+        if (!byParent.has(key)) byParent.set(key, []);
+        byParent.get(key).push(f);
+    }
+
+    const stack = [folderId];
+    while (stack.length) {
+        const current = stack.pop();
+        const children = byParent.get(current) || [];
+        for (const child of children) {
+            if (child.id === candidateAncestorId) return true;
+            stack.push(child.id);
+        }
+    }
+    return false;
+}
+
+/**
+ * 폴더를 다른 폴더(또는 루트)로 이동한다.
+ * @param {string} folderId          이동할 폴더 ID
+ * @param {string|null} targetParentId  목적지 부모 폴더 ID (루트면 null)
+ * @param {Array} allFolders         전체 폴더 목록 (사이클 방지용, listAllFolders 결과)
+ */
+export async function moveFolderToFolder(folderId, targetParentId, allFolders = []) {
+    // 자기 자신 또는 하위 폴더로는 이동 불가 (순환 구조 방지)
+    if (isSelfOrDescendant(allFolders, folderId, targetParentId)) {
+        throw new Error("Cannot move a folder into itself or one of its subfolders.");
+    }
+
+    const { data, error } = await supabase
+        .from('folders')
+        .update({ parent_folder_id: targetParentId })
+        .eq('id', folderId)
+        .select()
+        .single()
+
+    if (error) throw error
+    return data
+}
+
 export async function toggleFilePublished(fileId, published) {
     const { data, error } = await supabase
         .from('files')

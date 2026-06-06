@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getSession, clearSession } from "@/lib/auth";
-import { listFiles, listFolders, listAllFolders, buildFolderPathMap, deleteFolder, deleteFile, updateFolder, moveFileToFolder, handleDownload, downloadFilesAsZip } from "@/api/fileService";
+import { listFiles, listFolders, listAllFolders, buildFolderPathMap, deleteFolder, deleteFile, updateFolder, moveFileToFolder, moveFolderToFolder, handleDownload, downloadFilesAsZip } from "@/api/fileService";
 import { supabase } from "@/api/supabaseClient";
 import Sidebar from "@/components/Sidebar";
 import MobileSidebar from "@/components/MobileSidebar";
@@ -52,6 +52,7 @@ export default function Home() {
   const [currentFolder, setCurrentFolder] = useState(null);
   const [view, setView] = useState("grid");
   const [dragOverFolderId, setDragOverFolderId] = useState(null);
+  const [breadcrumbDropTarget, setBreadcrumbDropTarget] = useState(null);
   const [globalDragOver, setGlobalDragOver] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState(null);
   const dragCounterRef = useRef(0);
@@ -207,6 +208,25 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
     }
     return folders; // folders query already filters by currentFolder
   }, [folders, search, isManager, hiddenFolderIds]);
+
+  // Full ancestor chain (root → … → currentFolder) so the breadcrumb can show
+  // every level and let managers drop items onto any ancestor to move them up.
+  const folderPath = useMemo(() => {
+    if (!currentFolder) return [];
+    const byId = new Map(allFolders.map((f) => [f.id, f]));
+    const chain = [];
+    // Start from the live folder from allFolders if available (most up-to-date),
+    // otherwise fall back to currentFolder itself.
+    let node = byId.get(currentFolder.id) || currentFolder;
+    const guard = new Set();
+    while (node && !guard.has(node.id)) {
+      guard.add(node.id);
+      chain.unshift(node);
+      const parentId = node.parent_folder_id;
+      node = parentId ? byId.get(parentId) : null;
+    }
+    return chain;
+  }, [currentFolder, allFolders]);
 
   const totalPages = Math.max(1, Math.ceil(filteredFiles.length / PAGE_SIZE));
   const paginatedFiles = useMemo(() => {
@@ -465,6 +485,13 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
     e.dataTransfer.effectAllowed = "move";
   }, [selectedIds]);
 
+  // Folder dragging (manager only) — used to move a folder into another folder
+  // or up to a parent/root via the breadcrumb.
+  const handleFolderDragStart = useCallback((e, folder) => {
+    e.dataTransfer.setData("folderIds", JSON.stringify([folder.id]));
+    e.dataTransfer.effectAllowed = "move";
+  }, []);
+
   const handleDragOver = useCallback((e, folderId) => {
     e.preventDefault();
     setDragOverFolderId(folderId);
@@ -474,24 +501,54 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
     setDragOverFolderId(null);
   }, []);
 
+  // Core move logic shared by folder-drop and breadcrumb-drop.
+  // targetParentId === null  → move to root.
+  const moveDraggedItems = useCallback(async (e, targetParentId, targetLabel) => {
+    const rawFiles = e.dataTransfer.getData("fileIds");
+    const rawFolders = e.dataTransfer.getData("folderIds");
+
+    let fileIds = [];
+    let folderIds = [];
+    try { fileIds = rawFiles ? JSON.parse(rawFiles) : []; } catch { fileIds = rawFiles ? [rawFiles] : []; }
+    try { folderIds = rawFolders ? JSON.parse(rawFolders) : []; } catch { folderIds = rawFolders ? [rawFolders] : []; }
+
+    if (!fileIds.length && !folderIds.length) return;
+
+    // Prevent dropping a folder onto itself.
+    folderIds = folderIds.filter((id) => id !== targetParentId);
+    if (!fileIds.length && !folderIds.length) return;
+
+    try {
+      let moved = 0;
+      for (const fileId of fileIds) {
+        await moveFileToFolder(fileId, targetParentId);
+        moved++;
+      }
+      for (const folderId of folderIds) {
+        // allFolders is needed for cycle prevention (can't move into own subtree).
+        await moveFolderToFolder(folderId, targetParentId, allFolders);
+        moved++;
+      }
+      const dest = targetLabel || "the selected folder";
+      toast.success(`Moved ${moved} item${moved !== 1 ? "s" : ""} to ${dest}`);
+      invalidateAll();
+    } catch (err) {
+      toast.error(err.message || "Failed to move item(s)");
+    }
+  }, [invalidateAll, allFolders]);
+
   const handleDrop = useCallback(async (e, targetFolder) => {
     e.preventDefault();
     setDragOverFolderId(null);
-    const raw = e.dataTransfer.getData("fileIds");
-    if (!raw) return;
-    let ids = [];
-    try { ids = JSON.parse(raw); } catch { ids = [raw]; }
-    if (!ids.length) return;
-    try {
-      for (const fileId of ids) {
-        await moveFileToFolder(fileId, targetFolder.id);
-      }
-      toast.success(`Moved ${ids.length} file(s) to "${targetFolder.name}"`);
-      invalidateAll();
-    } catch (err) {
-      toast.error(err.message || "Failed to move file(s)");
-    }
-  }, [invalidateAll]);
+    await moveDraggedItems(e, targetFolder.id, `"${targetFolder.name}"`);
+  }, [moveDraggedItems]);
+
+  // Drop onto a breadcrumb crumb → move up to that level (root if parentId is null).
+  const handleBreadcrumbDrop = useCallback(async (e, parentId, label) => {
+    e.preventDefault();
+    setBreadcrumbDropTarget(null);
+    await moveDraggedItems(e, parentId, label);
+  }, [moveDraggedItems]);
 
   // Drag box selection handler
   const handleMouseDown = useCallback((e) => {
@@ -576,6 +633,17 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [filteredFileIds, isManager, selectedIds.size, clearSelection, handleBulkDelete]);
+
+  // Clear any lingering breadcrumb/folder drop highlight when a drag ends anywhere.
+  useEffect(() => {
+    const onDragEnd = () => { setBreadcrumbDropTarget(null); setDragOverFolderId(null); };
+    window.addEventListener('dragend', onDragEnd);
+    window.addEventListener('drop', onDragEnd);
+    return () => {
+      window.removeEventListener('dragend', onDragEnd);
+      window.removeEventListener('drop', onDragEnd);
+    };
+  }, []);
 
   // Global drag-and-drop for managers
   const handleGlobalDragEnter = (e) => {
@@ -728,21 +796,51 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
             />
           )}
 
-          {/* Breadcrumb */}
-          <div className="flex items-center gap-1.5 text-sm mb-5">
+          {/* Breadcrumb — managers can drag folders/files onto a crumb to move them up */}
+          <div className="flex items-center gap-1.5 text-sm mb-5 flex-wrap">
             <button
               onClick={() => { setCurrentFolder(null); clearSelection(); }}
-              className={`flex items-center gap-1 hover:text-primary transition-colors ${!currentFolder ? "text-foreground font-medium" : "text-muted-foreground"}`}
+              onDragOver={isManager ? (e) => { e.preventDefault(); setBreadcrumbDropTarget("root"); } : undefined}
+              onDragLeave={isManager ? () => setBreadcrumbDropTarget(null) : undefined}
+              onDrop={isManager ? (e) => handleBreadcrumbDrop(e, null, "WBCS Cloud (root)") : undefined}
+              title={isManager ? "Drop here to move to the top level" : undefined}
+              className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 transition-colors ${
+                breadcrumbDropTarget === "root"
+                  ? "bg-primary/15 ring-2 ring-primary text-primary"
+                  : !currentFolder ? "text-foreground font-medium hover:text-primary" : "text-muted-foreground hover:text-primary"
+              }`}
             >
               <HomeIcon className="h-3.5 w-3.5" />
               WBCS Cloud
             </button>
-            {currentFolder && (
-              <>
-                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-                <span className="text-foreground font-medium">{currentFolder.name}</span>
-              </>
-            )}
+
+            {folderPath.map((f, idx) => {
+              const isLast = idx === folderPath.length - 1;
+              return (
+                <span key={f.id} className="flex items-center gap-1.5">
+                  <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                  <button
+                    onClick={() => {
+                      if (isLast) return;
+                      clearSelection();
+                      setCurrentFolder(f);
+                      setCategory("all");
+                    }}
+                    onDragOver={isManager ? (e) => { e.preventDefault(); setBreadcrumbDropTarget(f.id); } : undefined}
+                    onDragLeave={isManager ? () => setBreadcrumbDropTarget(null) : undefined}
+                    onDrop={isManager ? (e) => handleBreadcrumbDrop(e, f.id, `"${f.name}"`) : undefined}
+                    title={isManager ? `Drop here to move into "${f.name}"` : undefined}
+                    className={`rounded-md px-1.5 py-0.5 transition-colors ${
+                      breadcrumbDropTarget === f.id
+                        ? "bg-primary/15 ring-2 ring-primary text-primary"
+                        : isLast ? "text-foreground font-medium" : "text-muted-foreground hover:text-primary"
+                    }`}
+                  >
+                    {f.name}
+                  </button>
+                </span>
+              );
+            })}
           </div>
 
           {/* Heading */}
@@ -785,6 +883,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
                           onToggleVisibility={isManager ? handleToggleFolderVisibility : undefined}
                           isManager={isManager}
                           view="list"
+                          onDragStart={isManager ? handleFolderDragStart : undefined}
                           onDragOver={(e) => handleDragOver(e, folder.id)}
                           onDrop={(e) => handleDrop(e, folder)}
                           onContextMenu={handleFolderContextMenu}
@@ -809,6 +908,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
                             onToggleVisibility={isManager ? handleToggleFolderVisibility : undefined}
                             isManager={isManager}
                             view={view}
+                            onDragStart={isManager ? handleFolderDragStart : undefined}
                             onDragOver={(e) => handleDragOver(e, folder.id)}
                             onDrop={(e) => handleDrop(e, folder)}
                             onContextMenu={handleFolderContextMenu}

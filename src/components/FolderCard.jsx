@@ -35,10 +35,12 @@ function VisibilityToggle({ folder, onToggleVisibility, small = false }) {
 }
 
 // Grid folder card
-function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, onDownload, onToggleVisibility, isManager, onDragOver, onDrop, onContextMenu }) {
+function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, onDownload, onToggleVisibility, isManager, onDragStart, onDragOver, onDrop, onContextMenu }) {
   const c = colorMap[folder.color || "blue"];
   return (
     <div
+      draggable={isManager && !!onDragStart}
+      onDragStart={isManager && onDragStart ? (e) => onDragStart(e, folder) : undefined}
       onClick={onClick}
       onDragOver={isManager ? onDragOver : undefined}
       onDrop={isManager ? onDrop : undefined}
@@ -113,10 +115,12 @@ function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, onDownload, 
 }
 
 // Compact folder
-function CompactFolder({ folder, fileCount, onClick, onToggleVisibility, isManager, onDragOver, onDrop, onContextMenu }) {
+function CompactFolder({ folder, fileCount, onClick, onToggleVisibility, isManager, onDragStart, onDragOver, onDrop, onContextMenu }) {
   const c = colorMap[folder.color || "blue"];
   return (
     <div
+      draggable={isManager && !!onDragStart}
+      onDragStart={isManager && onDragStart ? (e) => onDragStart(e, folder) : undefined}
       onClick={onClick}
       onDragOver={isManager ? onDragOver : undefined}
       onDrop={isManager ? onDrop : undefined}
@@ -144,10 +148,12 @@ function CompactFolder({ folder, fileCount, onClick, onToggleVisibility, isManag
 }
 
 // List folder row
-function ListFolder({ folder, fileCount, onClick, onDelete, onEdit, onToggleVisibility, isManager, onDragOver, onDrop, onContextMenu }) {
+function ListFolder({ folder, fileCount, onClick, onDelete, onEdit, onToggleVisibility, isManager, onDragStart, onDragOver, onDrop, onContextMenu }) {
   const c = colorMap[folder.color || "blue"];
   return (
     <div
+      draggable={isManager && !!onDragStart}
+      onDragStart={isManager && onDragStart ? (e) => onDragStart(e, folder) : undefined}
       onClick={onClick}
       onDragOver={isManager ? onDragOver : undefined}
       onDrop={isManager ? onDrop : undefined}
@@ -202,8 +208,8 @@ function ListFolder({ folder, fileCount, onClick, onDelete, onEdit, onToggleVisi
   );
 }
 
-export default function FolderCard({ folder, fileCount, onClick, onDelete, onEdit, onDownload, onToggleVisibility, isManager, view = "grid", onDragOver, onDrop, onContextMenu }) {
-  const props = { folder, fileCount, onClick, onDelete, onEdit, onDownload, onToggleVisibility, isManager, onDragOver, onDrop, onContextMenu };
+export default function FolderCard({ folder, fileCount, onClick, onDelete, onEdit, onDownload, onToggleVisibility, isManager, view = "grid", onDragStart, onDragOver, onDrop, onContextMenu }) {
+  const props = { folder, fileCount, onClick, onDelete, onEdit, onDownload, onToggleVisibility, isManager, onDragStart, onDragOver, onDrop, onContextMenu };
   if (view === "list") return <ListFolder {...props} />;
   if (view === "compact") return <CompactFolder {...props} />;
   return <GridFolder {...props} />;
