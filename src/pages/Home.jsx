@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getSession, clearSession } from "@/lib/auth";
 import { listFiles, listFolders, deleteFolder, deleteFile, updateFolder, moveFileToFolder, handleDownload, downloadFilesAsZip } from "@/api/fileService";
+import { supabase } from "@/api/supabaseClient";
 import Sidebar from "@/components/Sidebar";
 import MobileSidebar from "@/components/MobileSidebar";
 import SearchBar from "@/components/SearchBar";
@@ -265,19 +266,43 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
     }
   };
 
-  // 폴더 전체 다운로드
-  const handleFolderDownload = async (folder) => {
-    const folderFiles = files.filter(f => f.folder_id === folder.id);
-    if (folderFiles.length === 0) {
-      toast.info("This folder has no files.");
-      return;
-    }
+  // 재귀적으로 모든 하위 폴더 ID 수집
+  const getAllSubfolderIds = useCallback(async (parentId) => {
+    const ids = [parentId];
+    const { data: children } = await supabase
+      .from('folders')
+      .select('id')
+      .eq('parent_folder_id', parentId);
 
-    const taskId = addTask("download", `Downloading folder "${folder.name}"`);
+    if (children) {
+      for (const child of children) {
+        const childIds = await getAllSubfolderIds(child.id);
+        ids.push(...childIds);
+      }
+    }
+    return ids;
+  }, []);
+
+  // 폴더 전체 다운로드 (하위 폴더 포함, 구조 유지)
+  const handleFolderDownload = async (folder) => {
     try {
+      // 1. 해당 폴더 + 모든 하위 폴더 ID 수집
+      const allFolderIds = await getAllSubfolderIds(folder.id);
+      
+      // 2. 해당 폴더들에 속한 모든 파일 수집
+      const folderFiles = files.filter(f => allFolderIds.includes(f.folder_id));
+      
+      if (folderFiles.length === 0) {
+        toast.info("This folder has no files.");
+        return;
+      }
+
+      const taskId = addTask("download", `Downloading folder "${folder.name}"`);
+      
       const result = await downloadFilesAsZip(folderFiles, (progress) => {
         updateTask(taskId, { progress: Math.round(progress * 100) });
       });
+      
       if (result.success) {
         updateTask(taskId, { progress: 100, status: "done" });
         toast.success(`Downloaded folder "${folder.name}" (${result.count} files)`);
@@ -287,7 +312,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
         toast.error(result.error || 'Download failed');
       }
     } catch (err) {
-      updateTask(taskId, { status: "error", error: err.message });
+      console.error(err);
       toast.error("Folder download failed");
     }
   };
@@ -514,7 +539,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
               <Upload className="h-8 w-8 text-primary" />
             </div>
             <p className="text-xl font-semibold">Drop to upload</p>
-            <p className="text-sm text-muted-foreground">Release to add this file to WBCS Cloud</p>
+            <p className="text-sm text-muted-foreground">Release to add this file to WBCS Disk</p>
           </div>
         </div>
       )}
@@ -621,7 +646,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
               className={`flex items-center gap-1 hover:text-primary transition-colors ${!currentFolder ? "text-foreground font-medium" : "text-muted-foreground"}`}
             >
               <HomeIcon className="h-3.5 w-3.5" />
-              WBCS Cloud
+              WBCS Disk
             </button>
             {currentFolder && (
               <>
