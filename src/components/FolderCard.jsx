@@ -1,4 +1,4 @@
-import { Folder, MoreVertical, Trash2, Pencil, Download, Lock } from "lucide-react";
+import { Folder, MoreVertical, Trash2, Pencil, Download, Lock, Globe } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,8 +15,27 @@ const colorMap = {
   amber:   { bg: "bg-amber-500/10",   icon: "text-amber-500",   border: "hover:border-amber-300 dark:hover:border-amber-700" },
 };
 
+// Inline Public/Private toggle for folders (manager only) — mirrors the file PublishToggle
+function VisibilityToggle({ folder, onToggleVisibility, small = false }) {
+  const isPublic = folder.is_public !== false;
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onToggleVisibility && onToggleVisibility(folder); }}
+      title={isPublic ? "Make private (hide from users)" : "Make public (show to users)"}
+      className={`flex items-center gap-1 rounded-lg transition-colors text-[11px] font-medium px-2 py-1 ${
+        isPublic
+          ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400"
+          : "bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400"
+      }`}
+    >
+      {isPublic ? <Globe className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+      {!small && (isPublic ? "Public" : "Private")}
+    </button>
+  );
+}
+
 // Grid folder card
-function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, onDownload, isManager, onDragOver, onDrop, onContextMenu }) {
+function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, onDownload, onToggleVisibility, isManager, onDragOver, onDrop, onContextMenu }) {
   const c = colorMap[folder.color || "blue"];
   return (
     <div
@@ -35,11 +54,16 @@ function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, onDownload, 
             </span>
           )}
         </div>
-        
+
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+          {/* Public/Private toggle (manager only) */}
+          {isManager && onToggleVisibility && (
+            <VisibilityToggle folder={folder} onToggleVisibility={onToggleVisibility} />
+          )}
+
           {/* 다운로드 아이콘 */}
           {onDownload && fileCount > 0 && (
-            <button 
+            <button
               onClick={() => onDownload(folder)}
               className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary transition-colors"
               title="Download folder"
@@ -47,7 +71,7 @@ function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, onDownload, 
               <Download className="h-4 w-4" />
             </button>
           )}
-          
+
           {isManager && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -56,6 +80,13 @@ function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, onDownload, 
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {onToggleVisibility && (
+                  <DropdownMenuItem onClick={() => onToggleVisibility(folder)}>
+                    {folder.is_public === false
+                      ? (<><Globe className="h-4 w-4 mr-2" />Make Public</>)
+                      : (<><Lock className="h-4 w-4 mr-2" />Make Private</>)}
+                  </DropdownMenuItem>
+                )}
                 {onEdit && (
                   <DropdownMenuItem onClick={() => onEdit(folder)}>
                     <Pencil className="h-4 w-4 mr-2" />Edit Folder
@@ -82,7 +113,7 @@ function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, onDownload, 
 }
 
 // Compact folder
-function CompactFolder({ folder, fileCount, onClick, onDelete, onEdit, isManager, onDragOver, onDrop, onContextMenu }) {
+function CompactFolder({ folder, fileCount, onClick, onToggleVisibility, isManager, onDragOver, onDrop, onContextMenu }) {
   const c = colorMap[folder.color || "blue"];
   return (
     <div
@@ -90,8 +121,14 @@ function CompactFolder({ folder, fileCount, onClick, onDelete, onEdit, isManager
       onDragOver={isManager ? onDragOver : undefined}
       onDrop={isManager ? onDrop : undefined}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu && onContextMenu(e, folder); }}
-      className={`group bg-card border border-border rounded-xl p-3 cursor-pointer hover:shadow-md transition-all duration-200 flex flex-col items-center text-center gap-2 ${c.border}`}
+      className={`group relative bg-card border border-border rounded-xl p-3 cursor-pointer hover:shadow-md transition-all duration-200 flex flex-col items-center text-center gap-2 ${c.border}`}
     >
+      {/* Public/Private toggle (manager only) */}
+      {isManager && onToggleVisibility && (
+        <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+          <VisibilityToggle folder={folder} onToggleVisibility={onToggleVisibility} small />
+        </div>
+      )}
       <div className={`relative w-10 h-10 rounded-lg flex items-center justify-center ${c.bg}`}>
         <Folder className={`h-5 w-5 ${c.icon}`} />
         {folder.is_public === false && (
@@ -101,13 +138,13 @@ function CompactFolder({ folder, fileCount, onClick, onDelete, onEdit, isManager
         )}
       </div>
       <p className="text-xs font-medium truncate w-full" title={folder.name}>{folder.name}</p>
-      <p className="text-[10px] text-muted-foreground">{fileCount} files</p>
+      <p className="text-[10px] text-muted-foreground">{fileCount} files{folder.is_public === false ? " · Private" : ""}</p>
     </div>
   );
 }
 
 // List folder row
-function ListFolder({ folder, fileCount, onClick, onDelete, onEdit, isManager, onDragOver, onDrop, onContextMenu }) {
+function ListFolder({ folder, fileCount, onClick, onDelete, onEdit, onToggleVisibility, isManager, onDragOver, onDrop, onContextMenu }) {
   const c = colorMap[folder.color || "blue"];
   return (
     <div
@@ -128,6 +165,11 @@ function ListFolder({ folder, fileCount, onClick, onDelete, onEdit, isManager, o
         {folder.description && <p className="text-xs text-muted-foreground truncate">{folder.description}</p>}
       </div>
       <span className="text-xs text-muted-foreground">{fileCount} files</span>
+      {isManager && onToggleVisibility && (
+        <div className="opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+          <VisibilityToggle folder={folder} onToggleVisibility={onToggleVisibility} small />
+        </div>
+      )}
       {isManager && (
         <div onClick={(e) => e.stopPropagation()}>
           <DropdownMenu>
@@ -137,6 +179,13 @@ function ListFolder({ folder, fileCount, onClick, onDelete, onEdit, isManager, o
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {onToggleVisibility && (
+                <DropdownMenuItem onClick={() => onToggleVisibility(folder)}>
+                  {folder.is_public === false
+                    ? (<><Globe className="h-4 w-4 mr-2" />Make Public</>)
+                    : (<><Lock className="h-4 w-4 mr-2" />Make Private</>)}
+                </DropdownMenuItem>
+              )}
               {onEdit && (
                 <DropdownMenuItem onClick={() => onEdit(folder)}>
                   <Pencil className="h-4 w-4 mr-2" />Edit Folder
@@ -153,8 +202,8 @@ function ListFolder({ folder, fileCount, onClick, onDelete, onEdit, isManager, o
   );
 }
 
-export default function FolderCard({ folder, fileCount, onClick, onDelete, onEdit, onDownload, isManager, view = "grid", onDragOver, onDrop, onContextMenu }) {
-  const props = { folder, fileCount, onClick, onDelete, onEdit, onDownload, isManager, onDragOver, onDrop, onContextMenu };
+export default function FolderCard({ folder, fileCount, onClick, onDelete, onEdit, onDownload, onToggleVisibility, isManager, view = "grid", onDragOver, onDrop, onContextMenu }) {
+  const props = { folder, fileCount, onClick, onDelete, onEdit, onDownload, onToggleVisibility, isManager, onDragOver, onDrop, onContextMenu };
   if (view === "list") return <ListFolder {...props} />;
   if (view === "compact") return <CompactFolder {...props} />;
   return <GridFolder {...props} />;

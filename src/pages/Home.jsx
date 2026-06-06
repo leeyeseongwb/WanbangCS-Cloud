@@ -263,7 +263,14 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
       toast.success(next ? "Folder is now Public" : "Folder is now Private");
       invalidateAll();
     } catch (err) {
-      toast.error(err.message || "Failed to update folder visibility");
+      console.error("Toggle folder visibility failed:", err);
+      // Most common cause: the is_public column hasn't been added to the DB yet.
+      const msg = (err?.message || "").toLowerCase();
+      if (msg.includes("is_public") || msg.includes("column") || err?.code === "PGRST204" || err?.code === "42703") {
+        toast.error('DB missing "is_public" column. Run: ALTER TABLE public.folders ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT TRUE;');
+      } else {
+        toast.error(err.message || "Failed to update folder visibility");
+      }
     }
   };
 
@@ -775,6 +782,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
                           onClick={() => { clearSelection(); setCurrentFolder(folder); setCategory("all"); }}
                           onDelete={isManager ? handleDeleteFolder : undefined}
                           onEdit={isManager ? () => { setEditingFolder(folder); setEditFolderOpen(true); } : undefined}
+                          onToggleVisibility={isManager ? handleToggleFolderVisibility : undefined}
                           isManager={isManager}
                           view="list"
                           onDragOver={(e) => handleDragOver(e, folder.id)}
@@ -798,6 +806,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
                             onDelete={isManager ? handleDeleteFolder : undefined}
                             onEdit={isManager ? () => { setEditingFolder(folder); setEditFolderOpen(true); } : undefined}
                             onDownload={handleFolderDownload}
+                            onToggleVisibility={isManager ? handleToggleFolderVisibility : undefined}
                             isManager={isManager}
                             view={view}
                             onDragOver={(e) => handleDragOver(e, folder.id)}
