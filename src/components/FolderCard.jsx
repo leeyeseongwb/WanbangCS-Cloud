@@ -24,7 +24,7 @@ function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, isManager, o
       onDragOver={isManager ? onDragOver : undefined}
       onDrop={isManager ? onDrop : undefined}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu && onContextMenu(e, folder); }}
-      className={`group relative bg-card border border-border rounded-2xl p-5 cursor-pointer hover:shadow-lg transition-all duration-300 flex-shrink-0 min-w-[220px] ${c.border}`}
+      className={`group relative bg-card border border-border rounded-2xl p-5 cursor-pointer hover:shadow-lg flex-shrink-0 min-w-[220px] transition-all duration-300 ${c.border}`}
     >
       <div className="flex items-start justify-between mb-3">
         <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${c.bg}`}>

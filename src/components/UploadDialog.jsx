@@ -1,13 +1,10 @@
 import { useState, useRef, useEffect } from "react";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Upload, FileUp, Loader2, X, FolderUp } from "lucide-react";
 import { toast } from "sonner";
 import { uploadFile } from "@/api/fileService";
 
-// 폴더 내 파일들을 재귀적으로 수집
 function getFilesFromEntries(entries) {
   return new Promise((resolve) => {
     const results = [];
@@ -25,11 +22,7 @@ function getFilesFromEntries(entries) {
         const reader = entry.createReader();
         function readBatch() {
           reader.readEntries((entries) => {
-            if (entries.length === 0) {
-              pending--;
-              if (pending === 0) resolve(results);
-              return;
-            }
+            if (entries.length === 0) { pending--; if (pending === 0) resolve(results); return; }
             entries.forEach((e) => { pending++; processEntry(e); });
             readBatch();
           });
@@ -41,6 +34,18 @@ function getFilesFromEntries(entries) {
     if (pending === 0) resolve(results);
   });
 }
+
+// Safe task functions with fallback
+const safeAddTask = (type, title) => {
+  if (typeof window.addTask === 'function') return window.addTask(type, title);
+  return null;
+};
+const safeUpdateTask = (id, updates) => {
+  if (typeof window.updateTask === 'function') window.updateTask(id, updates);
+};
+const safeRemoveTask = (id) => {
+  if (typeof window.removeTask === 'function') window.removeTask(id);
+};
 
 export default function UploadDialog({ open, onOpenChange, onUploaded, currentFolderId = null, initialFiles = null }) {
   const [mode, setMode] = useState("files");
@@ -61,24 +66,10 @@ export default function UploadDialog({ open, onOpenChange, onUploaded, currentFo
     if (!open) { setFiles([]); setUploading(false); setMode("files"); }
   }, [open]);
 
-  // Background task tracking via window events
-  let _taskId = 0;
-  const addTask = (type, title) => {
-    const id = ++_taskId;
-    window.dispatchEvent(new CustomEvent('task:add', { detail: { id, type, title, progress: 0, status: "running" } }));
-    return id;
-  };
-  const updateTask = (id, updates) => {
-    window.dispatchEvent(new CustomEvent('task:update', { detail: { id, ...updates } }));
-  };
-  const removeTask = (id) => {
-    window.dispatchEvent(new CustomEvent('task:remove', { detail: { id } }));
-  };
-
   const handleUpload = async () => {
     if (files.length === 0) return;
     setUploading(true);
-    const taskId = addTask("upload", `Uploading ${files.length} file(s)`);
+    const taskId = safeAddTask("upload", `Uploading ${files.length} file(s)`);
     let successCount = 0;
     let failCount = 0;
     for (let i = 0; i < files.length; i++) {
@@ -87,13 +78,13 @@ export default function UploadDialog({ open, onOpenChange, onUploaded, currentFo
         await uploadFile({ file, folderId: currentFolderId });
         successCount++;
       } catch (err) { failCount++; console.error("Upload failed:", file.name, err); }
-      updateTask(taskId, { progress: Math.round(((i + 1) / files.length) * 100) });
+      safeUpdateTask(taskId, { progress: Math.round(((i + 1) / files.length) * 100) });
     }
     setUploading(false);
     if (successCount > 0) toast.success(`${successCount} file(s) uploaded!`);
     if (failCount > 0) toast.error(`${failCount} file(s) failed.`);
-    updateTask(taskId, { status: "done" });
-    setTimeout(() => removeTask(taskId), 2000);
+    safeUpdateTask(taskId, { status: "done" });
+    if (taskId) setTimeout(() => safeRemoveTask(taskId), 2000);
     onUploaded?.();
     onOpenChange(false);
     setFiles([]);
@@ -134,13 +125,10 @@ export default function UploadDialog({ open, onOpenChange, onUploaded, currentFo
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Upload className="h-5 w-5 text-primary" />Upload
-          </DialogTitle>
+          <DialogTitle className="flex items-center gap-2"><Upload className="h-5 w-5 text-primary" />Upload</DialogTitle>
           <DialogDescription>Upload individual files or an entire folder.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 pt-2">
-          {/* Mode Toggle */}
           <div className="flex gap-2">
             <button onClick={() => { setMode("files"); setFiles([]); }}
               className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors border ${mode === "files" ? "bg-primary text-primary-foreground border-primary" : "bg-secondary text-muted-foreground border-border hover:bg-secondary/80"}`}>
@@ -197,7 +185,6 @@ export default function UploadDialog({ open, onOpenChange, onUploaded, currentFo
             </div>
           )}
 
-          {/* File list */}
           {files.length > 0 && (
             <div className="max-h-40 overflow-y-auto space-y-1 border border-border rounded-lg p-2">
               {files.map((file, i) => (

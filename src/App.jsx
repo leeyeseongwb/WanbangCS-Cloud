@@ -13,48 +13,41 @@ import Register from './pages/Register';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import { Loader2 } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 
-// Global task state using window events (no context dependency)
-let _globalTaskId = 0;
+// Global task state via window events
 window._tasks = [];
 window._taskListeners = [];
 
-function notifyListeners() {
+function notifyTaskListeners() {
   window._taskListeners.forEach(fn => fn([...window._tasks]));
 }
 
 window.addTask = function(type, title) {
-  const id = ++_globalTaskId;
+  const id = Date.now() + Math.random();
   window._tasks.push({ id, type, title, progress: 0, status: "running" });
-  notifyListeners();
+  notifyTaskListeners();
   return id;
 };
 
 window.updateTask = function(id, updates) {
   const task = window._tasks.find(t => t.id === id);
-  if (task) {
-    Object.assign(task, updates);
-    notifyListeners();
-  }
+  if (task) { Object.assign(task, updates); notifyTaskListeners(); }
 };
 
 window.removeTask = function(id) {
   window._tasks = window._tasks.filter(t => t.id !== id);
-  notifyListeners();
+  notifyTaskListeners();
 };
 
-// TaskBar component - listens to window events
 function TaskBar() {
   const [tasks, setTasks] = useState([]);
 
   useEffect(() => {
-    const listener = (newTasks) => setTasks(newTasks);
+    const listener = () => setTasks([...window._tasks]);
     window._taskListeners.push(listener);
-    setTasks([...window._tasks]); // initial
-    return () => {
-      window._taskListeners = window._taskListeners.filter(fn => fn !== listener);
-    };
+    setTasks([...window._tasks]);
+    return () => { window._taskListeners = window._taskListeners.filter(fn => fn !== listener); };
   }, []);
 
   const runningTasks = tasks.filter(t => t.status === "running");
@@ -69,13 +62,10 @@ function TaskBar() {
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
               {task.title}
             </span>
-            <span className="text-xs font-mono text-muted-foreground">{task.progress}%</span>
+            <span className="text-xs font-mono text-muted-foreground">{Math.round(task.progress)}%</span>
           </div>
           <div className="h-2 bg-secondary rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-500 ease-out bg-primary"
-              style={{ width: `${task.progress}%` }}
-            />
+            <div className="h-full rounded-full transition-all duration-500 ease-out bg-primary" style={{ width: `${task.progress}%` }} />
           </div>
         </div>
       ))}
@@ -88,29 +78,19 @@ const pageVariants = {
   animate: { opacity: 1, y: 0 },
   exit: { opacity: 0, y: -16 },
 };
-
 const pageTransition = { duration: 0.3, ease: "easeOut" };
 
 function AnimatedRoutes() {
   const location = useLocation();
-
   return (
     <AnimatePresence mode="wait">
-      <motion.div
-        key={location.pathname}
-        variants={pageVariants}
-        initial="initial"
-        animate="animate"
-        exit="exit"
-        transition={pageTransition}
-      >
+      <motion.div key={location.pathname} variants={pageVariants} initial="initial" animate="animate" exit="exit" transition={pageTransition}>
         <Routes location={location} key={location.pathname}>
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
-          <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
-          </Route>
+          <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />} />
           <Route path="/" element={<Home />} />
           <Route path="*" element={<PageNotFound />} />
         </Routes>
@@ -121,24 +101,13 @@ function AnimatedRoutes() {
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, authError, navigateToLogin } = useAuth();
-
   if (isLoadingAuth) {
-    return (
-      <div className="fixed inset-0 flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
-      </div>
-    );
+    return <div className="fixed inset-0 flex items-center justify-center"><div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" /></div>;
   }
-
   if (authError) {
-    if (authError.type === 'user_not_registered') {
-      return <div className="fixed inset-0 flex items-center justify-center"><p>User not registered</p></div>;
-    } else if (authError.type === 'auth_required') {
-      navigateToLogin();
-      return null;
-    }
+    if (authError.type === 'user_not_registered') return <div className="fixed inset-0 flex items-center justify-center"><p>User not registered</p></div>;
+    if (authError.type === 'auth_required') { navigateToLogin(); return null; }
   }
-
   return <AnimatedRoutes />;
 };
 

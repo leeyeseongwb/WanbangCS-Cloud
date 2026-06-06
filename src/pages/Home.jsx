@@ -23,17 +23,20 @@ import { toast } from "sonner";
 
 const PAGE_SIZE = 20;
 
-// Background task tracking via window events (no extra file dependency)
+// Background task tracking via window events (with safe fallback)
 let _taskId = 0;
 const addTask = (type, title) => {
   const id = ++_taskId;
+  if (typeof window.addTask === 'function') return window.addTask(type, title);
   window.dispatchEvent(new CustomEvent('task:add', { detail: { id, type, title, progress: 0, status: "running" } }));
   return id;
 };
 const updateTask = (id, updates) => {
+  if (typeof window.updateTask === 'function') { window.updateTask(id, updates); return; }
   window.dispatchEvent(new CustomEvent('task:update', { detail: { id, ...updates } }));
 };
 const removeTask = (id) => {
+  if (typeof window.removeTask === 'function') { window.removeTask(id); return; }
   window.dispatchEvent(new CustomEvent('task:remove', { detail: { id } }));
 };
 
@@ -264,7 +267,8 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
 
     const taskId = addTask("download", `Downloading ${toDownload.length} file(s) as ZIP`);
     try {
-      const result = await downloadFilesAsZip(toDownload, (progress) => {
+      if (typeof downloadFilesAsZip !== 'function') { toast.error('Download function not available'); return; }
+    const result = await downloadFilesAsZip(toDownload, (progress) => {
         updateTask(taskId, { progress: Math.round(progress * 100) });
       });
       if (result.success) {
@@ -388,6 +392,34 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
   }, []);
 
   const showEmpty = !isLoading && visibleFolders.length === 0 && filteredFiles.length === 0;
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const isInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable;
+      if (isInput) return;
+
+      // Cmd/Ctrl + A: Select all visible files
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        e.preventDefault();
+        const allIds = filteredFileIds;
+        setSelectedIds(new Set(allIds));
+        if (allIds.length > 0) setLastSelectedId(allIds[allIds.length - 1]);
+      }
+      // Delete: Delete selected files (manager only)
+      if (e.key === 'Delete' && isManager && selectedIds.size > 0) {
+        e.preventDefault();
+        handleBulkDelete();
+      }
+      // Escape: Clear selection
+      if (e.key === 'Escape' && selectedIds.size > 0) {
+        e.preventDefault();
+        clearSelection();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [filteredFileIds, isManager, selectedIds.size, clearSelection, handleBulkDelete]);
 
   // Global drag-and-drop for managers
   const handleGlobalDragEnter = (e) => {
@@ -526,7 +558,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
         )}
 
         {/* Content */}
-        <div className="px-4 sm:px-6 lg:px-8 py-6 select-none overflow-x-auto" onMouseDown={handleMouseDown}>
+        <div className="px-4 sm:px-6 lg:px-8 py-6 select-none" onMouseDown={handleMouseDown}>
           {/* Drag selection box (viewport-based, fixed position) */}
           {dragBox && (
             <div
@@ -603,7 +635,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
                       ))}
                     </div>
                   ) : (
-                    <div className={`flex gap-4 w-max pb-4`}>
+                    <div className={`grid gap-4 ${view === "compact" ? "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6" : "grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5"}`}>
                       {visibleFolders.map((folder) => (
                         <div
                           key={folder.id}
@@ -650,7 +682,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
                       ))}
                     </div>
                   ) : (
-                    <div className={`flex gap-4 w-max pb-4`}>
+                    <div className={`grid gap-4 ${view === "compact" ? "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6" : "grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5"}`}>
                       {paginatedFiles.map((file) => (
                         <FileCard key={file.id} file={file} view={view} isManager={isManager} onDragStart={handleDragStart} onContextMenu={handleFileContextMenu} selected={selectedIds.has(file.id)} onSelect={(id, shift) => toggleSelect(id, shift)} />
                       ))}
