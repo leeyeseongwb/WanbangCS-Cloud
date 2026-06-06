@@ -1,4 +1,4 @@
-import { Folder, MoreVertical, Trash2, Pencil, Download } from "lucide-react";
+import { Folder, MoreVertical, Trash2, Pencil, Download, Lock } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,8 +27,13 @@ function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, onDownload, 
       className={`group relative bg-card border border-border rounded-2xl p-5 cursor-pointer hover:shadow-lg flex-shrink-0 min-w-[220px] transition-all duration-300 ${c.border}`}
     >
       <div className="flex items-start justify-between mb-3">
-        <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${c.bg}`}>
+        <div className={`relative w-12 h-12 rounded-xl flex items-center justify-center ${c.bg}`}>
           <Folder className={`h-6 w-6 ${c.icon}`} />
+          {folder.is_public === false && (
+            <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-background border border-border flex items-center justify-center" title="Private folder">
+              <Lock className="h-3 w-3 text-muted-foreground" />
+            </span>
+          )}
         </div>
         
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
@@ -64,9 +69,14 @@ function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, onDownload, 
           )}
         </div>
       </div>
-      <h3 className="font-medium text-sm truncate" title={folder.name}>{folder.name}</h3>
+      <h3 className="font-medium text-sm truncate flex items-center gap-1.5" title={folder.name}>
+        {folder.is_public === false && <Lock className="h-3 w-3 text-muted-foreground flex-shrink-0" />}
+        <span className="truncate">{folder.name}</span>
+      </h3>
       {folder.description && <p className="text-xs text-muted-foreground truncate mt-0.5">{folder.description}</p>}
-      <p className="text-xs text-muted-foreground mt-2">{fileCount} file{fileCount !== 1 ? "s" : ""}</p>
+      <p className="text-xs text-muted-foreground mt-2">
+        {fileCount} file{fileCount !== 1 ? "s" : ""}{folder.is_public === false ? " · Private" : ""}
+      </p>
     </div>
   );
 }
@@ -82,8 +92,13 @@ function CompactFolder({ folder, fileCount, onClick, onDelete, onEdit, isManager
       onContextMenu={(e) => { e.preventDefault(); onContextMenu && onContextMenu(e, folder); }}
       className={`group bg-card border border-border rounded-xl p-3 cursor-pointer hover:shadow-md transition-all duration-200 flex flex-col items-center text-center gap-2 ${c.border}`}
     >
-      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${c.bg}`}>
+      <div className={`relative w-10 h-10 rounded-lg flex items-center justify-center ${c.bg}`}>
         <Folder className={`h-5 w-5 ${c.icon}`} />
+        {folder.is_public === false && (
+          <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-background border border-border flex items-center justify-center" title="Private folder">
+            <Lock className="h-2.5 w-2.5 text-muted-foreground" />
+          </span>
+        )}
       </div>
       <p className="text-xs font-medium truncate w-full" title={folder.name}>{folder.name}</p>
       <p className="text-[10px] text-muted-foreground">{fileCount} files</p>
@@ -106,7 +121,10 @@ function ListFolder({ folder, fileCount, onClick, onDelete, onEdit, isManager, o
         <Folder className={`h-4 w-4 ${c.icon}`} />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium truncate">{folder.name}</p>
+        <p className="text-sm font-medium truncate flex items-center gap-1.5">
+          {folder.is_public === false && <Lock className="h-3 w-3 text-muted-foreground flex-shrink-0" />}
+          <span className="truncate">{folder.name}</span>
+        </p>
         {folder.description && <p className="text-xs text-muted-foreground truncate">{folder.description}</p>}
       </div>
       <span className="text-xs text-muted-foreground">{fileCount} files</span>

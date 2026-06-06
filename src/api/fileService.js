@@ -26,15 +26,27 @@ export async function listFolders(parentFolderId = null) {
     return data || []
 }
 
-export async function createFolder({ name, description = '', color = 'blue', parent_folder_id = null }) {
+export async function createFolder({ name, description = '', color = 'blue', parent_folder_id = null, is_public = true }) {
     const { data, error } = await supabase
         .from('folders')
-        .insert({ name, description, color, parent_folder_id })
+        .insert({ name, description, color, parent_folder_id, is_public })
         .select()
         .single()
 
     if (error) throw error
     return data
+}
+
+// Fetch ALL folders (used for visibility/privacy calculations across the whole tree)
+export async function listAllFolders() {
+    const { data, error } = await supabase
+        .from('folders')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(2000)
+
+    if (error) throw error
+    return data || []
 }
 
 // Create nested folders from a relative path (e.g. "Folder A/Folder A-1/File.pdf")
@@ -141,7 +153,17 @@ function detectCategory(mimeType) {
     return 'other'
 }
 
-export async function uploadFile({ file, folderId = null, description = '', category = null, published = true, relativePath = null }) {
+// Custom error used to signal a user-initiated cancellation
+export class UploadAbortError extends Error {
+    constructor(message = 'Upload cancelled') {
+        super(message);
+        this.name = 'UploadAbortError';
+        this.aborted = true;
+    }
+}
+
+export async function uploadFile({ file, folderId = null, description = '', category = null, published = true, relativePath = null, signal = null }) {
+    if (signal?.aborted) throw new UploadAbortError();
     // 1. Generate safe path (short hash to avoid Supabase Storage path length limit ~255 chars)
     const timestamp = Date.now()
     // Extract extension
@@ -171,6 +193,12 @@ export async function uploadFile({ file, folderId = null, description = '', cate
 
     if (uploadError) throw uploadError
 
+    // If cancelled while/after uploading the binary, clean it up and abort.
+    if (signal?.aborted) {
+        await supabase.storage.from('files').remove([path]).catch(() => {})
+        throw new UploadAbortError()
+    }
+
     // 3. Get public URL
     const { data: publicUrlData } = supabase.storage
         .from('files')
@@ -199,6 +227,14 @@ export async function uploadFile({ file, folderId = null, description = '', cate
         // Rollback: delete uploaded storage file
         await supabase.storage.from('files').remove([path])
         throw insertError
+    }
+
+    // If cancelled right after the metadata row was created, remove both the
+    // storage object and the DB row so nothing is left behind.
+    if (signal?.aborted) {
+        await supabase.from('files').delete().eq('id', data.id).catch(() => {})
+        await supabase.storage.from('files').remove([path]).catch(() => {})
+        throw new UploadAbortError()
     }
 
     return data
@@ -236,11 +272,12 @@ export async function deleteFile(file) {
     if (error) throw error
 }
 
-export async function updateFolder(folderId, { name, description, color }) {
+export async function updateFolder(folderId, { name, description, color, is_public }) {
     const updates = {}
     if (name !== undefined) updates.name = name
     if (description !== undefined) updates.description = description
     if (color !== undefined) updates.color = color
+    if (is_public !== undefined) updates.is_public = is_public
 
     const { data, error } = await supabase
         .from('folders')
@@ -297,10 +334,59 @@ export async function handleDownload(file) {
 }
 
 /**
- * 여러 파일을 하나의 ZIP으로 묶어 다운로드
- * returns: { success: boolean, count: number, error?: string }
+ * 폴더 트리에서, 주어진 rootFolder 이하 모든 폴더에 대해
+ * "rootFolder 기준 상대 경로"를 매핑한 객체를 반환.
+ * 예) { [rootFolderId]: "", [childId]: "Folder 1-a", [grandChildId]: "Folder 1-a/inner" }
+ *
+ * allFolders: listAllFolders()로 가져온 전체 폴더 배열
  */
-export async function downloadFilesAsZip(files, onProgress) {
+export function buildFolderPathMap(allFolders, rootFolder) {
+    const byParent = new Map();
+    for (const f of allFolders) {
+        const key = f.parent_folder_id || null;
+        if (!byParent.has(key)) byParent.set(key, []);
+        byParent.get(key).push(f);
+    }
+
+    const pathMap = {};
+    const sanitize = (name) => (name || 'Untitled').replace(/[\\/:*?"<>|]/g, '_').trim() || 'Untitled';
+
+    // The root folder itself maps to "" so its direct files sit at the zip root.
+    const walk = (folder, prefix) => {
+        pathMap[folder.id] = prefix;
+        const children = byParent.get(folder.id) || [];
+        for (const child of children) {
+            const childPath = prefix ? `${prefix}/${sanitize(child.name)}` : sanitize(child.name);
+            walk(child, childPath);
+        }
+    };
+
+    walk(rootFolder, '');
+    return pathMap;
+}
+
+export class DownloadAbortError extends Error {
+    constructor(message = 'Download cancelled') {
+        super(message);
+        this.name = 'DownloadAbortError';
+        this.aborted = true;
+    }
+}
+
+/**
+ * 여러 파일을 하나의 ZIP으로 묶어 다운로드
+ *
+ * @param {Array} files               파일 목록
+ * @param {Function} onProgress       (0~1) 진행률 콜백
+ * @param {Object} options
+ * @param {AbortSignal} options.signal      취소 신호 (X 버튼)
+ * @param {Function} options.pathFor        (file) => "Folder/Sub/file.ext" 형태의 ZIP 내부 경로
+ * @param {String} options.zipName          저장될 zip 파일 이름
+ * returns: { success: boolean, count: number, error?: string, aborted?: boolean }
+ */
+export async function downloadFilesAsZip(files, onProgress, options = {}) {
+    const { signal = null, pathFor = null, zipName = 'WBCS_Disk_files.zip' } = options;
+
     if (!files || files.length === 0) return { success: false, count: 0, error: 'No files to download' };
 
     const zip = new JSZip();
@@ -308,7 +394,25 @@ export async function downloadFilesAsZip(files, onProgress) {
     let downloadedCount = 0;
     const total = files.length;
 
+    const ensureUniquePath = (rawPath) => {
+        if (!usedNames[rawPath]) {
+            usedNames[rawPath] = 1;
+            return rawPath;
+        }
+        usedNames[rawPath]++;
+        const slash = rawPath.lastIndexOf('/');
+        const dir = slash === -1 ? '' : rawPath.slice(0, slash + 1);
+        const base = slash === -1 ? rawPath : rawPath.slice(slash + 1);
+        const dot = base.lastIndexOf('.');
+        if (dot > 0) {
+            return `${dir}${base.slice(0, dot)}_${usedNames[rawPath]}${base.slice(dot)}`;
+        }
+        return `${dir}${base}_${usedNames[rawPath]}`;
+    };
+
     for (let i = 0; i < total; i++) {
+        if (signal?.aborted) return { success: false, count: 0, aborted: true, error: 'Download cancelled' };
+
         const file = files[i];
         if (!file?.storage_path) continue;
         try {
@@ -320,21 +424,12 @@ export async function downloadFilesAsZip(files, onProgress) {
                 continue;
             }
 
-            let fileName = file.name;
-            if (usedNames[fileName]) {
-                usedNames[fileName]++;
-                const parts = fileName.split('.');
-                if (parts.length > 1) {
-                    const ext = parts.pop();
-                    fileName = `${parts.join('.')}_${usedNames[fileName]}.${ext}`;
-                } else {
-                    fileName = `${fileName}_${usedNames[fileName]}`;
-                }
-            } else {
-                usedNames[fileName] = 1;
-            }
+            // Build the path inside the zip. When pathFor is provided we keep the
+            // original folder structure (e.g. "Folder 1-a/File 1").
+            let zipPath = pathFor ? pathFor(file) : file.name;
+            zipPath = ensureUniquePath(zipPath);
 
-            zip.file(fileName, data);
+            zip.file(zipPath, data);
             downloadedCount++;
         } catch (err) {
             console.warn(`Error adding ${file.name} to zip:`, err);
@@ -344,6 +439,7 @@ export async function downloadFilesAsZip(files, onProgress) {
         if (onProgress) onProgress(((i + 1) / total) * 0.8);
     }
 
+    if (signal?.aborted) return { success: false, count: 0, aborted: true, error: 'Download cancelled' };
     if (downloadedCount === 0) return { success: false, count: 0, error: 'No files could be downloaded' };
 
     if (onProgress) onProgress(0.85);
@@ -356,12 +452,13 @@ export async function downloadFilesAsZip(files, onProgress) {
         }
     });
 
+    if (signal?.aborted) return { success: false, count: 0, aborted: true, error: 'Download cancelled' };
     if (onProgress) onProgress(1);
 
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = blobUrl;
-    a.download = 'WBCS_Disk_files.zip';
+    a.download = zipName;
     document.body.appendChild(a);
     a.click();
     a.remove();

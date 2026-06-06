@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getSession, clearSession } from "@/lib/auth";
-import { listFiles, listFolders, deleteFolder, deleteFile, updateFolder, moveFileToFolder, handleDownload, downloadFilesAsZip } from "@/api/fileService";
+import { listFiles, listFolders, listAllFolders, buildFolderPathMap, deleteFolder, deleteFile, updateFolder, moveFileToFolder, handleDownload, downloadFilesAsZip } from "@/api/fileService";
 import { supabase } from "@/api/supabaseClient";
 import Sidebar from "@/components/Sidebar";
 import MobileSidebar from "@/components/MobileSidebar";
@@ -18,7 +18,7 @@ import DarkModeToggle from "@/components/DarkModeToggle";
 import ViewToggle from "@/components/ViewToggle";
 import ContextMenu from "@/components/ContextMenu";
 import {
-  Loader2, HardDrive, ChevronRight, Home as HomeIcon, Upload, Download, X, Trash2, Pencil, ArrowUpDown, ChevronLeft, ChevronRight as ChevronRightIcon, Info
+  Loader2, HardDrive, ChevronRight, Home as HomeIcon, Upload, Download, X, Trash2, Pencil, ArrowUpDown, ChevronLeft, ChevronRight as ChevronRightIcon, Info, Lock, Globe
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -125,19 +125,48 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
     queryFn: () => listFolders(currentFolder?.id || null),
   });
 
-  // 모든 폴더 ID를 가져와서 파일 필터링에 사용 (중첩 폴더 지원)
+  // 모든 폴더를 가져와서 파일 필터링 / private 처리 / 폴더 다운로드 경로 계산에 사용
   const { data: allFolders = [] } = useQuery({
     queryKey: ["allFolders"],
-    queryFn: () => listFolders(null), // 최상위만 가져와도 충분하지 않으므로 전체를 가져오는 별도 함수가 필요하지만, 일단 현재 로직으로 처리
-    staleTime: 1000 * 60 * 5,
+    queryFn: listAllFolders,
+    staleTime: 1000 * 60,
   });
 
   const isLoading = loadingFiles || loadingFolders;
+
+  // ── Private 폴더 처리 ───────────────────────────────────────────────
+  // private 폴더 자신과 그 하위 폴더 전체의 ID 집합을 계산한다.
+  // 일반 사용자(비매니저)에게는 이 집합에 속한 폴더와 파일이 모두 숨겨진다.
+  const hiddenFolderIds = useMemo(() => {
+    const hidden = new Set();
+    if (isManager) return hidden; // 매니저는 모두 볼 수 있음
+
+    // parent -> children 맵
+    const byParent = new Map();
+    for (const f of allFolders) {
+      const key = f.parent_folder_id || "root";
+      if (!byParent.has(key)) byParent.set(key, []);
+      byParent.get(key).push(f);
+    }
+    const markSubtree = (folderId) => {
+      hidden.add(folderId);
+      const children = byParent.get(folderId) || [];
+      for (const c of children) markSubtree(c.id);
+    };
+    for (const f of allFolders) {
+      if (f.is_public === false) markSubtree(f.id);
+    }
+    return hidden;
+  }, [allFolders, isManager]);
 
   // Filtered & sorted files
   const filteredFiles = useMemo(() => {
     let result = files;
     if (!isManager) result = result.filter((f) => f.published !== false);
+    // private 폴더(및 그 하위)에 속한 파일은 일반 사용자에게 숨김
+    if (!isManager && hiddenFolderIds.size > 0) {
+      result = result.filter((f) => !f.folder_id || !hiddenFolderIds.has(f.folder_id));
+    }
     if (currentFolder) {
       result = result.filter((f) => f.folder_id === currentFolder.id);
     } else if (!search.trim()) {
@@ -151,6 +180,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
       const q = search.toLowerCase();
       result = files.filter(
         (f) => (isManager || f.published !== false) &&
+          (isManager || !f.folder_id || !hiddenFolderIds.has(f.folder_id)) &&
           (f.name?.toLowerCase().includes(q) || f.description?.toLowerCase().includes(q))
       );
     }
@@ -165,14 +195,18 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
       return 0;
     });
     return result;
-  }, [files, folders, currentFolder, category, search, isManager, sortBy, sortOrder]);
+  }, [files, folders, currentFolder, category, search, isManager, sortBy, sortOrder, hiddenFolderIds]);
 
   const filteredFileIds = useMemo(() => filteredFiles.map(f => f.id), [filteredFiles]);
 
   const visibleFolders = useMemo(() => {
     if (search.trim()) return [];
+    // 일반 사용자에게는 private 폴더(및 하위)를 숨김
+    if (!isManager && hiddenFolderIds.size > 0) {
+      return folders.filter((f) => !hiddenFolderIds.has(f.id));
+    }
     return folders; // folders query already filters by currentFolder
-  }, [folders, search]);
+  }, [folders, search, isManager, hiddenFolderIds]);
 
   const totalPages = Math.max(1, Math.ceil(filteredFiles.length / PAGE_SIZE));
   const paginatedFiles = useMemo(() => {
@@ -200,30 +234,38 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
   }, [openContextMenu, isManager]);
 
   const handleFolderContextMenu = useCallback((e, folder) => {
-    const folderFiles = files.filter(f => f.folder_id === folder.id);
     const items = [
       { icon: Info, label: "Folder Info", onClick: () => { setInfoFolder(folder); setFolderInfoOpen(true); } },
       {
         icon: Download,
-        label: `Download all files (${folderFiles.length})`,
-        onClick: async () => {
-          if (folderFiles.length === 0) { toast.info("This folder has no files."); return; }
-          for (const f of folderFiles) {
-            try { await handleDownload(f); } catch (e) { console.warn(e); }
-            await new Promise(r => setTimeout(r, 300));
-          }
-          toast.success(`Downloaded ${folderFiles.length} file(s)…`);
-        },
+        label: `Download folder (ZIP)`,
+        onClick: () => handleFolderDownload(folder),
       },
     ];
     if (isManager) {
       items.push(
+        {
+          icon: folder.is_public === false ? Globe : Lock,
+          label: folder.is_public === false ? "Make Public" : "Make Private",
+          onClick: () => handleToggleFolderVisibility(folder),
+        },
         { icon: Pencil, label: "Edit Folder", onClick: () => { setEditingFolder(folder); setEditFolderOpen(true); } },
         { icon: Trash2, label: "Delete Folder", onClick: () => handleDeleteFolder(folder) },
       );
     }
     openContextMenu(e, items);
   }, [files, openContextMenu, isManager]);
+
+  const handleToggleFolderVisibility = async (folder) => {
+    const next = !(folder.is_public !== false); // toggle
+    try {
+      await updateFolder(folder.id, { is_public: next });
+      toast.success(next ? "Folder is now Public" : "Folder is now Private");
+      invalidateAll();
+    } catch (err) {
+      toast.error(err.message || "Failed to update folder visibility");
+    }
+  };
 
   const handleDeleteFile = async (file) => {
     try {
@@ -283,33 +325,64 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
     return ids;
   }, []);
 
-  // 폴더 전체 다운로드 (하위 폴더 포함, 구조 유지)
+  // 폴더 전체 다운로드 (하위 폴더 구조 그대로 유지, 취소 가능)
   const handleFolderDownload = async (folder) => {
     try {
-      // 1. 해당 폴더 + 모든 하위 폴더 ID 수집
-      const allFolderIds = await getAllSubfolderIds(folder.id);
-      
-      // 2. 해당 폴더들에 속한 모든 파일 수집
-      const folderFiles = files.filter(f => allFolderIds.includes(f.folder_id));
-      
+      // 0. 최신 폴더 트리 확보 (allFolders가 비어있을 수 있으니 안전하게 보강)
+      let folderTree = allFolders;
+      if (!folderTree || folderTree.length === 0) {
+        folderTree = await listAllFolders();
+      }
+
+      // 1. 해당 폴더 + 모든 하위 폴더의 ID → 상대경로 매핑
+      const pathMap = buildFolderPathMap(folderTree, folder);
+      const allFolderIds = Object.keys(pathMap);
+
+      // 2. 매니저가 아니면 private 폴더(및 하위)는 제외
+      const includedIds = isManager
+        ? allFolderIds
+        : allFolderIds.filter((id) => !hiddenFolderIds.has(id));
+      const includedSet = new Set(includedIds);
+
+      // 3. 해당 폴더들에 속한 파일 수집 (비매니저는 published 파일만)
+      const folderFiles = files.filter((f) =>
+        includedSet.has(f.folder_id) && (isManager || f.published !== false)
+      );
+
       if (folderFiles.length === 0) {
         toast.info("This folder has no files.");
         return;
       }
 
+      // 4. ZIP 내부 경로 결정 함수 (하위 폴더 구조 유지)
+      const safeName = (name) => (name || "file").replace(/[\\/:*?"<>|]/g, "_");
+      const pathFor = (file) => {
+        const dir = pathMap[file.folder_id] || "";
+        const fname = safeName(file.name);
+        return dir ? `${dir}/${fname}` : fname;
+      };
+
+      const controller = new AbortController();
       const taskId = addTask("download", `Downloading folder "${folder.name}"`);
-      
-      const result = await downloadFilesAsZip(folderFiles, (progress) => {
-        updateTask(taskId, { progress: Math.round(progress * 100) });
-      });
-      
+      updateTask(taskId, { onCancel: () => controller.abort() });
+
+      const result = await downloadFilesAsZip(
+        folderFiles,
+        (progress) => updateTask(taskId, { progress: Math.round(progress * 100) }),
+        { signal: controller.signal, pathFor, zipName: `${safeName(folder.name)}.zip` }
+      );
+
       if (result.success) {
         updateTask(taskId, { progress: 100, status: "done" });
         toast.success(`Downloaded folder "${folder.name}" (${result.count} files)`);
         setTimeout(() => removeTask(taskId), 2000);
+      } else if (result.aborted) {
+        removeTask(taskId);
+        toast.info("Download cancelled");
       } else {
         updateTask(taskId, { status: "error", error: result.error });
         toast.error(result.error || 'Download failed');
+        setTimeout(() => removeTask(taskId), 2500);
       }
     } catch (err) {
       console.error(err);
@@ -330,19 +403,27 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
       return;
     }
 
+    const controller = new AbortController();
     const taskId = addTask("download", `Downloading ${toDownload.length} file(s) as ZIP`);
+    updateTask(taskId, { onCancel: () => controller.abort() });
     try {
-      if (typeof downloadFilesAsZip !== 'function') { toast.error('Download function not available'); return; }
-    const result = await downloadFilesAsZip(toDownload, (progress) => {
-        updateTask(taskId, { progress: Math.round(progress * 100) });
-      });
+      if (typeof downloadFilesAsZip !== 'function') { toast.error('Download function not available'); removeTask(taskId); return; }
+      const result = await downloadFilesAsZip(
+        toDownload,
+        (progress) => updateTask(taskId, { progress: Math.round(progress * 100) }),
+        { signal: controller.signal }
+      );
       if (result.success) {
         updateTask(taskId, { progress: 100, status: "done" });
         toast.success(`Downloaded ${result.count} file(s) as ZIP`);
         setTimeout(() => removeTask(taskId), 2000);
+      } else if (result.aborted) {
+        removeTask(taskId);
+        toast.info("Download cancelled");
       } else {
         updateTask(taskId, { status: "error", error: result.error });
         toast.error(result.error || 'ZIP download failed');
+        setTimeout(() => removeTask(taskId), 2500);
       }
     } catch (err) {
       updateTask(taskId, { status: "error", error: err.message });
@@ -359,6 +440,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
     queryClient.invalidateQueries({ queryKey: ["folders"] });
     // Also invalidate any nested folder queries
     queryClient.invalidateQueries({ queryKey: ["folders"], exact: false });
+    queryClient.invalidateQueries({ queryKey: ["allFolders"] });
   }, [queryClient]);
 
   const handleLogout = () => {

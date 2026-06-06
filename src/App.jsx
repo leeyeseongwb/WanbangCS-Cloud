@@ -12,7 +12,7 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
-import { Loader2 } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import { useState, useEffect } from "react";
 
 // Global task state via window events
@@ -53,16 +53,35 @@ function TaskBar() {
   const runningTasks = tasks.filter(t => t.status === "running");
   if (runningTasks.length === 0) return null;
 
+  const handleCancel = (task) => {
+    if (task.cancelling) return;
+    try { task.onCancel?.(); } catch (e) { console.warn(e); }
+    // Mark as cancelling so the button reflects the in-progress cancel.
+    window.updateTask(task.id, { cancelling: true, title: `${task.title} (cancelling…)` });
+  };
+
   return (
     <div className="fixed bottom-0 left-0 lg:left-64 right-0 z-50 bg-card/95 backdrop-blur-md border-t border-border shadow-2xl">
       {runningTasks.map(task => (
         <div key={task.id} className="px-4 sm:px-6 py-3">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              {task.title}
+          <div className="flex items-center justify-between mb-2 gap-2">
+            <span className="text-sm font-medium flex items-center gap-2 min-w-0">
+              <Loader2 className="h-4 w-4 animate-spin text-primary flex-shrink-0" />
+              <span className="truncate">{task.title}</span>
             </span>
-            <span className="text-xs font-mono text-muted-foreground">{Math.round(task.progress)}%</span>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span className="text-xs font-mono text-muted-foreground">{Math.round(task.progress)}%</span>
+              {typeof task.onCancel === "function" && (
+                <button
+                  onClick={() => handleCancel(task)}
+                  disabled={task.cancelling}
+                  title="Cancel"
+                  className="p-1 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
           </div>
           <div className="h-2 bg-secondary rounded-full overflow-hidden">
             <div className="h-full rounded-full transition-all duration-500 ease-out bg-primary" style={{ width: `${task.progress}%` }} />

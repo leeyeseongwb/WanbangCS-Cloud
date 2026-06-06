@@ -64,6 +64,41 @@ VITE_REGISTRATION_CODE=YourNewCodeHere
 
 > **Note:** You must restart the dev server (`npm run dev`) after changing `.env`.
 
+## 🔒 Folder Visibility (Public / Private)
+
+Folders now have an `is_public` flag.
+
+- **Public** (default): everyone can see the folder, its subfolders, and its files.
+- **Private**: hidden from non-managers. When a folder is private, **all of its subfolders and files are hidden too** (the whole subtree). Managers still see everything.
+
+Managers can change visibility from the folder's **context menu** (right-click → *Make Private / Make Public*) or in the **Edit Folder** / **New Folder** dialog.
+
+> **⚠️ Existing databases:** run this once in Supabase → SQL Editor (it's already included in `supabase/schema.sql`):
+>
+> ```sql
+> ALTER TABLE public.folders ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT TRUE;
+> ```
+
+## ⬇️⬆️ Cancelling Uploads & Downloads
+
+The progress bar at the bottom now has an **X (cancel)** button:
+
+- **Upload:** pressing X stops the upload. Any files **already uploaded in that batch are automatically deleted**, so nothing partial is left behind.
+- **Download (ZIP / folder):** pressing X cancels the ZIP build before it is saved.
+
+## 📂 Folder Download keeps subfolder structure
+
+Downloading a folder produces a single `.zip` that **preserves the original subfolder tree**. For example, downloading `Folder 1` yields:
+
+```
+Folder 1.zip
+├── Folder 1-a/
+│   ├── File 1
+│   └── File 2
+└── Folder 2/
+    └── File 3
+```
+
 ## 📁 Database Table Names
 
 | Table | Purpose |

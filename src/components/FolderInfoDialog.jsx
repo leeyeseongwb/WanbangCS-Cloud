@@ -1,7 +1,7 @@
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
-import { Folder, Calendar, FileText, HardDrive } from "lucide-react";
+import { Folder, Calendar, FileText, HardDrive, Globe, Lock } from "lucide-react";
 import { format } from "date-fns";
 import { formatBytes } from "@/components/FileCard";
 
@@ -40,6 +40,10 @@ export default function FolderInfoDialog({ open, onOpenChange, folder, fileCount
             <div className="flex items-center gap-2 text-muted-foreground">
               <HardDrive className="w-4 h-4" />
               <span>{formatBytes(totalSize)} total</span>
+            </div>
+            <div className="flex items-center gap-2 text-muted-foreground">
+              {folder.is_public === false ? <Lock className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
+              <span>{folder.is_public === false ? "Private" : "Public"}</span>
             </div>
             <div className="flex items-center gap-2 text-muted-foreground">
               <Calendar className="w-4 h-4" />

@@ -1,0 +1,16 @@
+{
+  "name": "WBCS Online Disk",
+  "short_name": "WBCS Disk",
+  "description": "Online Cloud Storage for Wanbang Computer Science Team",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#3b82f6",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "16x16 32x32 48x48",
+      "type": "image/x-icon"
+    }
+  ]
+}

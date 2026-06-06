@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button";
 import { Upload, FileUp, Loader2, X, FolderUp } from "lucide-react";
 import { toast } from "sonner";
-import { uploadFile } from "@/api/fileService";
+import { uploadFile, deleteFile, UploadAbortError } from "@/api/fileService";
 
 function getFilesFromEntries(entries) {
   return new Promise((resolve) => {
@@ -69,21 +69,60 @@ export default function UploadDialog({ open, onOpenChange, onUploaded, currentFo
   const handleUpload = async () => {
     if (files.length === 0) return;
     setUploading(true);
+
+    // AbortController lets the X button cancel mid-upload.
+    const controller = new AbortController();
     const taskId = safeAddTask("upload", `Uploading ${files.length} file(s)`);
+    safeUpdateTask(taskId, { onCancel: () => controller.abort() });
+
     let successCount = 0;
     let failCount = 0;
+    let aborted = false;
+    // Track everything successfully uploaded in THIS batch so we can roll it back on cancel.
+    const uploadedInBatch = [];
+
     for (let i = 0; i < files.length; i++) {
+      if (controller.signal.aborted) { aborted = true; break; }
       const file = files[i];
       try {
-        await uploadFile({ file, folderId: currentFolderId, relativePath: file.relativePath || null });
+        const uploaded = await uploadFile({
+          file,
+          folderId: currentFolderId,
+          relativePath: file.relativePath || null,
+          signal: controller.signal,
+        });
+        if (uploaded) uploadedInBatch.push(uploaded);
         successCount++;
-      } catch (err) { failCount++; console.error("Upload failed:", file.name, err); }
+      } catch (err) {
+        if (err instanceof UploadAbortError || err?.aborted || controller.signal.aborted) {
+          aborted = true;
+          break;
+        }
+        failCount++;
+        console.error("Upload failed:", file.name, err);
+      }
       safeUpdateTask(taskId, { progress: Math.round(((i + 1) / files.length) * 100) });
     }
+
+    if (aborted) {
+      // Cancel pressed: remove every file that was already uploaded in this batch.
+      safeUpdateTask(taskId, { title: "Cancelling upload…", onCancel: undefined });
+      for (const f of uploadedInBatch) {
+        try { await deleteFile(f); } catch (e) { console.warn("Cleanup failed:", e); }
+      }
+      setUploading(false);
+      toast.info("Upload cancelled — uploaded files were removed.");
+      if (taskId) safeRemoveTask(taskId);
+      onUploaded?.();          // refresh the view so removed items disappear
+      onOpenChange(false);
+      setFiles([]);
+      return;
+    }
+
     setUploading(false);
     if (successCount > 0) toast.success(`${successCount} file(s) uploaded!`);
     if (failCount > 0) toast.error(`${failCount} file(s) failed.`);
-    safeUpdateTask(taskId, { status: "done" });
+    safeUpdateTask(taskId, { status: "done", onCancel: undefined });
     if (taskId) setTimeout(() => safeRemoveTask(taskId), 2000);
     onUploaded?.();
     onOpenChange(false);

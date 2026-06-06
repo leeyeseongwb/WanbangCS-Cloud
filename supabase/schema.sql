@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS public.folders (
     name TEXT NOT NULL,
     description TEXT,
     color TEXT DEFAULT 'blue' CHECK (color IN ('blue', 'purple', 'emerald', 'orange', 'pink', 'amber')),
+    is_public BOOLEAN DEFAULT TRUE,
     parent_folder_id UUID REFERENCES public.folders(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -41,7 +42,11 @@ CREATE TABLE IF NOT EXISTS public.managers (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- 4b. Migration for existing deployments: add is_public column to folders if missing
+ALTER TABLE public.folders ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT TRUE;
+
 -- 5. Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_folders_is_public ON public.folders(is_public);
 CREATE INDEX IF NOT EXISTS idx_files_folder_id ON public.files(folder_id);
 CREATE INDEX IF NOT EXISTS idx_files_category ON public.files(category);
 CREATE INDEX IF NOT EXISTS idx_files_published ON public.files(published);
@@ -86,6 +91,10 @@ ALTER TABLE public.folders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.managers ENABLE ROW LEVEL SECURITY;
 
 -- Anonymous / logged-in users can read published files & folders
+-- NOTE: Folder privacy (is_public) is enforced on the client because this app
+-- uses a custom client-side manager session rather than Supabase Auth, so RLS
+-- cannot distinguish managers from regular users here. Private folders (and their
+-- entire subtree of subfolders/files) are hidden in the UI for non-managers.
 CREATE POLICY "Allow public read folders" ON public.folders
     FOR SELECT USING (true);
 

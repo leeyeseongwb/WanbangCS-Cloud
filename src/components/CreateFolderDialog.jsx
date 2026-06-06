@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { FolderPlus } from "lucide-react";
+import { FolderPlus, Globe, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { createFolder } from "@/api/fileService";
 
@@ -27,17 +27,19 @@ export default function CreateFolderDialog({ open, onOpenChange, onCreated }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [color, setColor] = useState("blue");
+  const [isPublic, setIsPublic] = useState(true);
   const [loading, setLoading] = useState(false);
 
   const handleCreate = async () => {
     if (!name.trim()) return;
     setLoading(true);
     try {
-      await createFolder({ name: name.trim(), description, color });
+      await createFolder({ name: name.trim(), description, color, is_public: isPublic });
       toast.success("Folder created!");
       setName("");
       setDescription("");
       setColor("blue");
+      setIsPublic(true);
       onOpenChange(false);
       onCreated?.();
     } catch (err) {
@@ -48,7 +50,7 @@ export default function CreateFolderDialog({ open, onOpenChange, onCreated }) {
   };
 
   const handleClose = (open) => {
-    if (!open) { setName(""); setDescription(""); setColor("blue"); }
+    if (!open) { setName(""); setDescription(""); setColor("blue"); setIsPublic(true); }
     onOpenChange(open);
   };
 
@@ -98,6 +100,31 @@ export default function CreateFolderDialog({ open, onOpenChange, onCreated }) {
                 />
               ))}
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Visibility</Label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setIsPublic(true)}
+                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors border ${isPublic ? "bg-primary text-primary-foreground border-primary" : "bg-secondary text-muted-foreground border-border hover:bg-secondary/80"}`}
+              >
+                <Globe className="h-4 w-4" /> Public
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsPublic(false)}
+                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors border ${!isPublic ? "bg-primary text-primary-foreground border-primary" : "bg-secondary text-muted-foreground border-border hover:bg-secondary/80"}`}
+              >
+                <Lock className="h-4 w-4" /> Private
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {isPublic
+                ? "Anyone can see this folder and its contents."
+                : "Hidden from non-managers — its subfolders and files are hidden too."}
+            </p>
           </div>
 
           <Button onClick={handleCreate} disabled={!name.trim() || loading} className="w-full">
