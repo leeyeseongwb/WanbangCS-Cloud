@@ -539,7 +539,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
               <Upload className="h-8 w-8 text-primary" />
             </div>
             <p className="text-xl font-semibold">Drop to upload</p>
-            <p className="text-sm text-muted-foreground">Release to add this file to WBCS Disk</p>
+            <p className="text-sm text-muted-foreground">Release to add this file to WBCS Cloud</p>
           </div>
         </div>
       )}
@@ -646,7 +646,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
               className={`flex items-center gap-1 hover:text-primary transition-colors ${!currentFolder ? "text-foreground font-medium" : "text-muted-foreground"}`}
             >
               <HomeIcon className="h-3.5 w-3.5" />
-              WBCS Disk
+              WBCS Cloud
             </button>
             {currentFolder && (
               <>
