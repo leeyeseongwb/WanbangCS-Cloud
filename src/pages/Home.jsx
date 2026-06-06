@@ -232,10 +232,16 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
     const toDelete = filteredFiles.filter(f => selectedIds.has(f.id));
     if (toDelete.length === 0) return;
     if (!confirm(`Delete ${toDelete.length} file(s)? This cannot be undone.`)) return;
+    const taskId = addTask("delete", `Deleting ${toDelete.length} file(s)`);
+    let done = 0;
     for (const file of toDelete) {
       try { await deleteFile(file); } catch (e) { console.warn(e); }
+      done++;
+      updateTask(taskId, { progress: Math.round((done / toDelete.length) * 100) });
     }
+    updateTask(taskId, { progress: 100, status: "done" });
     toast.success(`${toDelete.length} file(s) deleted`);
+    setTimeout(() => removeTask(taskId), 2000);
     queryClient.invalidateQueries({ queryKey: ["files"] });
     clearSelection();
   };

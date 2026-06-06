@@ -68,7 +68,7 @@ function detectCategory(mimeType) {
     return 'other'
 }
 
-export async function uploadFile({ file, folderId = null, description = '', category = null, published = true }) {
+export async function uploadFile({ file, folderId = null, description = '', category = null, published = true, relativePath = null }) {
     // 1. Generate safe path (short hash to avoid Supabase Storage path length limit ~255 chars)
     const timestamp = Date.now()
     // Extract extension
@@ -76,7 +76,15 @@ export async function uploadFile({ file, folderId = null, description = '', cate
     const ext = extMatch ? extMatch[0] : ''
     // Short hash of filename using simple hash
     const fileNameHash = Array.from(file.name).reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, timestamp).toString(36)
-    const path = `${timestamp}_${fileNameHash}${ext}`
+    let path = `${timestamp}_${fileNameHash}${ext}`
+    let displayName = file.name
+
+    if (relativePath) {
+      // Preserve folder structure in storage path and display name
+      const safeRel = relativePath.replace(/[^a-zA-Z0-9._/-]/g, '_')
+      path = `${safeRel.replace(/\//g, '_')}_${timestamp}_${fileNameHash}${ext}`
+      displayName = relativePath
+    }
 
     const finalCategory = category || detectCategory(file.type)
 
@@ -98,7 +106,7 @@ export async function uploadFile({ file, folderId = null, description = '', cate
     const { data, error: insertError } = await supabase
         .from('files')
         .insert({
-            name: file.name,
+            name: displayName,
             file_url: fileUrl,
             storage_path: path,
             file_size: file.size,

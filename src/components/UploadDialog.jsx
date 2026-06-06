@@ -75,7 +75,7 @@ export default function UploadDialog({ open, onOpenChange, onUploaded, currentFo
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       try {
-        await uploadFile({ file, folderId: currentFolderId });
+        await uploadFile({ file, folderId: currentFolderId, relativePath: file.relativePath || null });
         successCount++;
       } catch (err) { failCount++; console.error("Upload failed:", file.name, err); }
       safeUpdateTask(taskId, { progress: Math.round(((i + 1) / files.length) * 100) });
