@@ -265,6 +265,33 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
     }
   };
 
+  // 폴더 전체 다운로드
+  const handleFolderDownload = async (folder) => {
+    const folderFiles = files.filter(f => f.folder_id === folder.id);
+    if (folderFiles.length === 0) {
+      toast.info("This folder has no files.");
+      return;
+    }
+
+    const taskId = addTask("download", `Downloading folder "${folder.name}"`);
+    try {
+      const result = await downloadFilesAsZip(folderFiles, (progress) => {
+        updateTask(taskId, { progress: Math.round(progress * 100) });
+      });
+      if (result.success) {
+        updateTask(taskId, { progress: 100, status: "done" });
+        toast.success(`Downloaded folder "${folder.name}" (${result.count} files)`);
+        setTimeout(() => removeTask(taskId), 2000);
+      } else {
+        updateTask(taskId, { status: "error", error: result.error });
+        toast.error(result.error || 'Download failed');
+      }
+    } catch (err) {
+      updateTask(taskId, { status: "error", error: err.message });
+      toast.error("Folder download failed");
+    }
+  };
+
   const handleBulkDownload = async () => {
     const toDownload = filteredFiles.filter(f => selectedIds.has(f.id));
     if (toDownload.length === 0) return;
@@ -663,6 +690,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
                             onClick={() => { clearSelection(); setCurrentFolder(folder); setCategory("all"); }}
                             onDelete={isManager ? handleDeleteFolder : undefined}
                             onEdit={isManager ? () => { setEditingFolder(folder); setEditFolderOpen(true); } : undefined}
+                            onDownload={handleFolderDownload}
                             isManager={isManager}
                             view={view}
                             onDragOver={(e) => handleDragOver(e, folder.id)}

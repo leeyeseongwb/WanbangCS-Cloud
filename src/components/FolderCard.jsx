@@ -1,4 +1,4 @@
-import { Folder, MoreVertical, Trash2, Pencil } from "lucide-react";
+import { Folder, MoreVertical, Trash2, Pencil, Download } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,7 +16,7 @@ const colorMap = {
 };
 
 // Grid folder card
-function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, isManager, onDragOver, onDrop, onContextMenu }) {
+function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, onDownload, isManager, onDragOver, onDrop, onContextMenu }) {
   const c = colorMap[folder.color || "blue"];
   return (
     <div
@@ -30,8 +30,20 @@ function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, isManager, o
         <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${c.bg}`}>
           <Folder className={`h-6 w-6 ${c.icon}`} />
         </div>
-        {isManager && (
-          <div className="opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+        
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+          {/* 다운로드 아이콘 */}
+          {onDownload && fileCount > 0 && (
+            <button 
+              onClick={() => onDownload(folder)}
+              className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary transition-colors"
+              title="Download folder"
+            >
+              <Download className="h-4 w-4" />
+            </button>
+          )}
+          
+          {isManager && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="p-1.5 rounded-lg hover:bg-secondary">
@@ -49,8 +61,8 @@ function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, isManager, o
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-          </div>
-        )}
+          )}
+        </div>
       </div>
       <h3 className="font-medium text-sm truncate" title={folder.name}>{folder.name}</h3>
       {folder.description && <p className="text-xs text-muted-foreground truncate mt-0.5">{folder.description}</p>}
@@ -123,8 +135,8 @@ function ListFolder({ folder, fileCount, onClick, onDelete, onEdit, isManager, o
   );
 }
 
-export default function FolderCard({ folder, fileCount, onClick, onDelete, onEdit, isManager, view = "grid", onDragOver, onDrop, onContextMenu }) {
-  const props = { folder, fileCount, onClick, onDelete, onEdit, isManager, onDragOver, onDrop, onContextMenu };
+export default function FolderCard({ folder, fileCount, onClick, onDelete, onEdit, onDownload, isManager, view = "grid", onDragOver, onDrop, onContextMenu }) {
+  const props = { folder, fileCount, onClick, onDelete, onEdit, onDownload, isManager, onDragOver, onDrop, onContextMenu };
   if (view === "list") return <ListFolder {...props} />;
   if (view === "compact") return <CompactFolder {...props} />;
   return <GridFolder {...props} />;
