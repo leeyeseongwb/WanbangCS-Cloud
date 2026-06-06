@@ -5,21 +5,31 @@ import { supabase } from './supabaseClient'
 // Folder API
 // ============================================================
 
-export async function listFolders() {
-    const { data, error } = await supabase
+export async function listFolders(parentFolderId = null) {
+    let query = supabase
         .from('folders')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(200)
 
+    if (parentFolderId == null) {
+        query = query.is('parent_folder_id', null)
+    } else {
+        query = query.eq('parent_folder_id', parentFolderId)
+    }
+
+    const { data, error } = await query
+
+    console.log('[listFolders] parentFolderId:', parentFolderId, 'result count:', data?.length || 0);
+
     if (error) throw error
     return data || []
 }
 
-export async function createFolder({ name, description = '', color = 'blue' }) {
+export async function createFolder({ name, description = '', color = 'blue', parent_folder_id = null }) {
     const { data, error } = await supabase
         .from('folders')
-        .insert({ name, description, color })
+        .insert({ name, description, color, parent_folder_id })
         .select()
         .single()
 
@@ -27,18 +37,81 @@ export async function createFolder({ name, description = '', color = 'blue' }) {
     return data
 }
 
-export async function deleteFolder(id) {
-    // Check if folder has files
-    const { count, error: countError } = await supabase
-        .from('files')
-        .select('*', { count: 'exact', head: true })
-        .eq('folder_id', id)
+// Create nested folders from a relative path (e.g. "Folder A/Folder A-1/File.pdf")
+// Returns the ID of the deepest folder created/found
+export async function ensureFolderPath(relativePath, parentFolderId = null) {
+    if (!relativePath) return parentFolderId;
 
-    if (countError) throw countError
-    if (count > 0) {
-        throw new Error(`Folder has ${count} file(s). Move or delete the files first.`)
+    const parts = relativePath.split('/').filter(Boolean);
+    if (parts.length === 0) return parentFolderId;
+
+    // Determine folder parts (exclude the last item if it looks like a filename)
+    let folderParts = parts;
+    const lastPart = parts[parts.length - 1];
+    if (lastPart.includes('.')) {
+        folderParts = parts.slice(0, -1);
     }
 
+    if (folderParts.length === 0) return parentFolderId;
+
+    let currentParent = parentFolderId;
+
+    for (const folderName of folderParts) {
+        console.log('[ensureFolderPath] Creating/checking folder:', folderName, 'under parent:', currentParent);
+
+        // Check if folder with same name already exists under current parent
+        let query = supabase
+            .from('folders')
+            .select('id')
+            .eq('name', folderName);
+
+        if (currentParent == null) {
+            query = query.is('parent_folder_id', null);
+        } else {
+            query = query.eq('parent_folder_id', currentParent);
+        }
+
+        const { data: existing } = await query.maybeSingle();
+
+        if (existing?.id) {
+            console.log('[ensureFolderPath] Found existing folder:', existing.id);
+            currentParent = existing.id;
+        } else {
+            const newFolder = await createFolder({
+                name: folderName,
+                parent_folder_id: currentParent ?? null
+            });
+            console.log('[ensureFolderPath] Created new folder:', newFolder.id);
+            currentParent = newFolder.id;
+        }
+    }
+
+    return currentParent;
+}
+
+export async function deleteFolder(id) {
+    // 1. 해당 폴더에 속한 모든 파일 삭제
+    const { data: filesInFolder } = await supabase
+        .from('files')
+        .select('id, storage_path')
+        .eq('folder_id', id)
+
+    if (filesInFolder && filesInFolder.length > 0) {
+        // Storage에서 파일 삭제
+        const storagePaths = filesInFolder
+            .map(f => f.storage_path)
+            .filter(Boolean)
+
+        if (storagePaths.length > 0) {
+            await supabase.storage.from('files').remove(storagePaths)
+        }
+
+        // DB에서 파일 삭제
+        const fileIds = filesInFolder.map(f => f.id)
+        await supabase.from('files').delete().in('id', fileIds)
+    }
+
+    // 2. 폴더 삭제
     const { error } = await supabase.from('folders').delete().eq('id', id)
     if (error) throw error
 }
@@ -79,11 +152,14 @@ export async function uploadFile({ file, folderId = null, description = '', cate
     let path = `${timestamp}_${fileNameHash}${ext}`
     let displayName = file.name
 
+    let finalFolderId = folderId
+
     if (relativePath) {
-      // Preserve folder structure in storage path and display name
+      // Preserve folder structure: create nested folders and place file inside the deepest one
+      finalFolderId = await ensureFolderPath(relativePath, folderId)
+      displayName = relativePath.split('/').pop() || file.name   // just the filename
       const safeRel = relativePath.replace(/[^a-zA-Z0-9._/-]/g, '_')
       path = `${safeRel.replace(/\//g, '_')}_${timestamp}_${fileNameHash}${ext}`
-      displayName = relativePath
     }
 
     const finalCategory = category || detectCategory(file.type)
@@ -113,7 +189,7 @@ export async function uploadFile({ file, folderId = null, description = '', cate
             file_type: file.type,
             category: finalCategory,
             description,
-            folder_id: folderId,
+            folder_id: finalFolderId,
             published,
         })
         .select()

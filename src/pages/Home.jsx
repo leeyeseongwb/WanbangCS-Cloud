@@ -120,8 +120,15 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
   });
 
   const { data: folders = [], isLoading: loadingFolders } = useQuery({
-    queryKey: ["folders"],
-    queryFn: listFolders,
+    queryKey: ["folders", currentFolder?.id || null],
+    queryFn: () => listFolders(currentFolder?.id || null),
+  });
+
+  // 모든 폴더 ID를 가져와서 파일 필터링에 사용 (중첩 폴더 지원)
+  const { data: allFolders = [] } = useQuery({
+    queryKey: ["allFolders"],
+    queryFn: () => listFolders(null), // 최상위만 가져와도 충분하지 않으므로 전체를 가져오는 별도 함수가 필요하지만, 일단 현재 로직으로 처리
+    staleTime: 1000 * 60 * 5,
   });
 
   const isLoading = loadingFiles || loadingFolders;
@@ -133,8 +140,8 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
     if (currentFolder) {
       result = result.filter((f) => f.folder_id === currentFolder.id);
     } else if (!search.trim()) {
-      const folderIds = new Set(folders.map((f) => f.id));
-      result = result.filter((f) => !f.folder_id || !folderIds.has(f.folder_id));
+      // 중첩 폴더 지원: folder_id가 있으면(어떤 폴더에 속해있으면) 루트에서 숨김
+      result = result.filter((f) => !f.folder_id);
     }
     if (category !== "all") {
       result = result.filter((f) => f.category === category);
@@ -162,9 +169,9 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
   const filteredFileIds = useMemo(() => filteredFiles.map(f => f.id), [filteredFiles]);
 
   const visibleFolders = useMemo(() => {
-    if (search.trim() || currentFolder) return [];
-    return folders;
-  }, [folders, currentFolder, search]);
+    if (search.trim()) return [];
+    return folders; // folders query already filters by currentFolder
+  }, [folders, search]);
 
   const totalPages = Math.max(1, Math.ceil(filteredFiles.length / PAGE_SIZE));
   const paginatedFiles = useMemo(() => {
@@ -298,6 +305,8 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
   const invalidateAll = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["files"] });
     queryClient.invalidateQueries({ queryKey: ["folders"] });
+    // Also invalidate any nested folder queries
+    queryClient.invalidateQueries({ queryKey: ["folders"], exact: false });
   }, [queryClient]);
 
   const handleLogout = () => {

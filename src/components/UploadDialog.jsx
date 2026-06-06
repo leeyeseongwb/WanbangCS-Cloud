@@ -116,7 +116,14 @@ export default function UploadDialog({ open, onOpenChange, onUploaded, currentFo
 
   const handleFolderInput = (e) => {
     const selected = Array.from(e.target.files || []);
-    if (selected.length > 0) setFiles(prev => [...prev, ...selected]);
+    // webkitRelativePath를 이용해 relativePath 설정 (input folder upload용)
+    const filesWithPath = selected.map(file => {
+      if (file.webkitRelativePath) {
+        file.relativePath = file.webkitRelativePath;
+      }
+      return file;
+    });
+    if (filesWithPath.length > 0) setFiles(prev => [...prev, ...filesWithPath]);
   };
 
   const removeFile = (index) => { setFiles(prev => prev.filter((_, i) => i !== index)); };

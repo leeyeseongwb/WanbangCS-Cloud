@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS public.folders (
     name TEXT NOT NULL,
     description TEXT,
     color TEXT DEFAULT 'blue' CHECK (color IN ('blue', 'purple', 'emerald', 'orange', 'pink', 'amber')),
+    parent_folder_id UUID REFERENCES public.folders(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -45,6 +46,7 @@ CREATE INDEX IF NOT EXISTS idx_files_folder_id ON public.files(folder_id);
 CREATE INDEX IF NOT EXISTS idx_files_category ON public.files(category);
 CREATE INDEX IF NOT EXISTS idx_files_published ON public.files(published);
 CREATE INDEX IF NOT EXISTS idx_folders_name ON public.folders(name);
+CREATE INDEX IF NOT EXISTS idx_folders_parent ON public.folders(parent_folder_id);
 CREATE INDEX IF NOT EXISTS idx_managers_username ON public.managers(username);
 
 -- 6. Updated_at auto trigger
