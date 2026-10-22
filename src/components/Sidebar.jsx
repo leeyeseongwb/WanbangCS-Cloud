@@ -1,11 +1,10 @@
-import { HardDrive, FileText, Image, Archive, File, Upload, FolderPlus, LogIn, LogOut, User } from "lucide-react";
+import { HardDrive, FileText, Presentation, File, Upload, FolderPlus, LogIn, LogOut, User } from "lucide-react";
 import DarkModeToggle from "./DarkModeToggle";
 import FolderTree from "./FolderTree";
 
 const categories = [
-{ key: "document", label: "Documents", icon: FileText },
-{ key: "image", label: "Images", icon: Image },
-{ key: "archive", label: "Archives", icon: Archive },
+{ key: "pdf", label: "PDF", icon: FileText },
+{ key: "pptx", label: "PPTX", icon: Presentation },
 { key: "other", label: "Other", icon: File }];
 
 

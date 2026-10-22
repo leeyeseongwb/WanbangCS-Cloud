@@ -24,6 +24,14 @@ import { toast } from "sonner";
 
 const PAGE_SIZE = 20;
 
+// Sidebar filter: group files by extension (pdf / pptx / everything else)
+const fileKind = (f) => {
+  const ext = (f.name || "").split(".").pop().toLowerCase();
+  if (ext === "pdf") return "pdf";
+  if (ext === "ppt" || ext === "pptx") return "pptx";
+  return "other";
+};
+
 // Background task tracking via window events (with safe fallback)
 let _taskId = 0;
 const addTask = (type, title) => {
@@ -170,12 +178,12 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
     }
     if (currentFolder) {
       result = result.filter((f) => f.folder_id === currentFolder.id);
-    } else if (!search.trim()) {
+    } else if (!search.trim() && category === "all") {
       // 중첩 폴더 지원: folder_id가 있으면(어떤 폴더에 속해있으면) 루트에서 숨김
       result = result.filter((f) => !f.folder_id);
     }
     if (category !== "all") {
-      result = result.filter((f) => f.category === category);
+      result = result.filter((f) => fileKind(f) === category);
     }
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -968,7 +976,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
           <div className="mb-5 flex items-center justify-between">
             <div>
               <h2 className="text-2xl font-semibold font-heading">
-                {search ? `Results for "${search}"` : currentFolder ? currentFolder.name : category === "all" ? "My Drive" : ({ document: "Documents", image: "Images", archive: "Archives", other: "Other files" }[category] || category)}
+                {search ? `Results for "${search}"` : currentFolder ? currentFolder.name : category === "all" ? "My Drive" : ({ pdf: "PDF", pptx: "PPTX", other: "Other files" }[category] || category)}
               </h2>
               <p className="text-sm text-muted-foreground mt-1">
                 {!search && !currentFolder && visibleFolders.length > 0 && (
@@ -1117,6 +1125,8 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
         open={folderDialogOpen}
         onOpenChange={setFolderDialogOpen}
         onCreated={invalidateAll}
+        parentFolderId={currentFolder?.id || null}
+        parentFolderName={currentFolder?.name || null}
       />
       <EditFileDialog
         open={editFileOpen}

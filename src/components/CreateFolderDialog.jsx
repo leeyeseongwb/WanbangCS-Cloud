@@ -23,7 +23,7 @@ const COLORS = [
   { key: "amber",   label: "Amber",   cls: "bg-amber-500" },
 ];
 
-export default function CreateFolderDialog({ open, onOpenChange, onCreated }) {
+export default function CreateFolderDialog({ open, onOpenChange, onCreated, parentFolderId = null, parentFolderName = null }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [color, setColor] = useState("blue");
@@ -34,7 +34,7 @@ export default function CreateFolderDialog({ open, onOpenChange, onCreated }) {
     if (!name.trim()) return;
     setLoading(true);
     try {
-      await createFolder({ name: name.trim(), description, color, is_public: isPublic });
+      await createFolder({ name: name.trim(), description, color, is_public: isPublic, parent_folder_id: parentFolderId });
       toast.success("Folder created!");
       setName("");
       setDescription("");
@@ -62,7 +62,7 @@ export default function CreateFolderDialog({ open, onOpenChange, onCreated }) {
             <FolderPlus className="h-5 w-5 text-primary" />
             New Folder
           </DialogTitle>
-          <DialogDescription>Create a folder to organize your files.</DialogDescription>
+          <DialogDescription>{parentFolderName ? `Create a folder inside "${parentFolderName}".` : "Create a folder to organize your files."}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 pt-2">
