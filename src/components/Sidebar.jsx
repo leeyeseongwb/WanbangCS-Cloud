@@ -1,15 +1,15 @@
-import { HardDrive, FileText, Image, Archive, File, FolderOpen, Upload, FolderPlus, LogIn, LogOut, User } from "lucide-react";
+import { HardDrive, FileText, Image, Archive, File, Upload, FolderPlus, LogIn, LogOut, User } from "lucide-react";
 import DarkModeToggle from "./DarkModeToggle";
+import FolderTree from "./FolderTree";
 
 const categories = [
-{ key: "all", label: "My Drive", icon: HardDrive },
 { key: "document", label: "Documents", icon: FileText },
 { key: "image", label: "Images", icon: Image },
 { key: "archive", label: "Archives", icon: Archive },
 { key: "other", label: "Other", icon: File }];
 
 
-export default function Sidebar({ activeCategory, onCategoryChange, onUploadClick, onNewFolderClick, isManager, managerName, onLoginClick, onLogout }) {
+export default function Sidebar({ activeCategory, onCategoryChange, onUploadClick, onNewFolderClick, isManager, managerName, onLoginClick, onLogout, folders = [], currentFolder = null, folderPath = [], onFolderNavigate }) {
   return (
     <aside className="w-64 h-screen fixed left-0 top-0 bg-card border-r border-border flex flex-col z-20">
       {/* Logo */}
@@ -45,7 +45,14 @@ export default function Sidebar({ activeCategory, onCategoryChange, onUploadClic
 
       {/* Categories */}
       <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto">
-        <p className="px-3 text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-2">
+        <FolderTree
+          folders={folders}
+          currentFolder={currentFolder}
+          path={folderPath}
+          active={activeCategory === "all"}
+          onNavigate={onFolderNavigate}
+        />
+        <p className="px-3 pt-4 text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-2">
           Categories
         </p>
         {categories.map(({ key, label, icon: Icon }) => {

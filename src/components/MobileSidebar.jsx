@@ -3,7 +3,7 @@ import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Sidebar from "./Sidebar";
 
-export default function MobileSidebar({ activeCategory, onCategoryChange, onUploadClick, onNewFolderClick, isManager, managerName, onLoginClick, onLogout }) {
+export default function MobileSidebar(props) {
   return (
     <Sheet>
       <SheetTrigger asChild>
@@ -12,16 +12,7 @@ export default function MobileSidebar({ activeCategory, onCategoryChange, onUplo
         </Button>
       </SheetTrigger>
       <SheetContent side="left" className="p-0 w-64">
-        <Sidebar
-          activeCategory={activeCategory}
-          onCategoryChange={onCategoryChange}
-          onUploadClick={onUploadClick}
-          onNewFolderClick={onNewFolderClick}
-          isManager={isManager}
-          managerName={managerName}
-          onLoginClick={onLoginClick}
-          onLogout={onLogout}
-        />
+        <Sidebar {...props} />
       </SheetContent>
     </Sheet>
   );

@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button";
 import { Upload, FileUp, Loader2, X, FolderUp } from "lucide-react";
 import { toast } from "sonner";
-import { uploadFile, deleteFile, UploadAbortError } from "@/api/fileService";
+import { uploadFile, deleteFiles, UploadAbortError } from "@/api/fileService";
 
 function getFilesFromEntries(entries) {
   return new Promise((resolve) => {
@@ -81,35 +81,44 @@ export default function UploadDialog({ open, onOpenChange, onUploaded, currentFo
     // Track everything successfully uploaded in THIS batch so we can roll it back on cancel.
     const uploadedInBatch = [];
 
-    for (let i = 0; i < files.length; i++) {
-      if (controller.signal.aborted) { aborted = true; break; }
-      const file = files[i];
-      try {
-        const uploaded = await uploadFile({
-          file,
-          folderId: currentFolderId,
-          relativePath: file.relativePath || null,
-          signal: controller.signal,
-        });
-        if (uploaded) uploadedInBatch.push(uploaded);
-        successCount++;
-      } catch (err) {
-        if (err instanceof UploadAbortError || err?.aborted || controller.signal.aborted) {
-          aborted = true;
-          break;
+    // Upload several files at once (shared folder cache avoids duplicate folder creation).
+    const CONCURRENCY = 5;
+    const folderCache = new Map();
+    let next = 0;
+    let finished = 0;
+    const worker = async () => {
+      while (!aborted) {
+        if (controller.signal.aborted) { aborted = true; return; }
+        const i = next++;
+        if (i >= files.length) return;
+        const file = files[i];
+        try {
+          const uploaded = await uploadFile({
+            file,
+            folderId: currentFolderId,
+            relativePath: file.relativePath || null,
+            signal: controller.signal,
+            folderCache,
+          });
+          if (uploaded) uploadedInBatch.push(uploaded);
+          successCount++;
+        } catch (err) {
+          if (err instanceof UploadAbortError || err?.aborted || controller.signal.aborted) {
+            aborted = true;
+            return;
+          }
+          failCount++;
+          console.error("Upload failed:", file.name, err);
         }
-        failCount++;
-        console.error("Upload failed:", file.name, err);
+        safeUpdateTask(taskId, { progress: Math.round((++finished / files.length) * 100) });
       }
-      safeUpdateTask(taskId, { progress: Math.round(((i + 1) / files.length) * 100) });
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, files.length) }, worker));
 
     if (aborted) {
       // Cancel pressed: remove every file that was already uploaded in this batch.
       safeUpdateTask(taskId, { title: "Cancelling upload…", onCancel: undefined });
-      for (const f of uploadedInBatch) {
-        try { await deleteFile(f); } catch (e) { console.warn("Cleanup failed:", e); }
-      }
+      try { await deleteFiles(uploadedInBatch); } catch (e) { console.warn("Cleanup failed:", e); }
       setUploading(false);
       toast.info("Upload cancelled — uploaded files were removed.");
       if (taskId) safeRemoveTask(taskId);

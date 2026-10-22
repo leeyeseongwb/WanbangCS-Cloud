@@ -51,7 +51,7 @@ export async function listAllFolders() {
 
 // Create nested folders from a relative path (e.g. "Folder A/Folder A-1/File.pdf")
 // Returns the ID of the deepest folder created/found
-export async function ensureFolderPath(relativePath, parentFolderId = null) {
+export async function ensureFolderPath(relativePath, parentFolderId = null, cache = null) {
     if (!relativePath) return parentFolderId;
 
     const parts = relativePath.split('/').filter(Boolean);
@@ -69,33 +69,21 @@ export async function ensureFolderPath(relativePath, parentFolderId = null) {
     let currentParent = parentFolderId;
 
     for (const folderName of folderParts) {
-        console.log('[ensureFolderPath] Creating/checking folder:', folderName, 'under parent:', currentParent);
-
-        // Check if folder with same name already exists under current parent
-        let query = supabase
-            .from('folders')
-            .select('id')
-            .eq('name', folderName);
-
-        if (currentParent == null) {
-            query = query.is('parent_folder_id', null);
-        } else {
-            query = query.eq('parent_folder_id', currentParent);
-        }
-
-        const { data: existing } = await query.maybeSingle();
-
-        if (existing?.id) {
-            console.log('[ensureFolderPath] Found existing folder:', existing.id);
-            currentParent = existing.id;
-        } else {
-            const newFolder = await createFolder({
-                name: folderName,
-                parent_folder_id: currentParent ?? null
-            });
-            console.log('[ensureFolderPath] Created new folder:', newFolder.id);
-            currentParent = newFolder.id;
-        }
+        const cacheKey = `${currentParent ?? 'root'}/${folderName}`;
+        if (cache?.has(cacheKey)) { currentParent = await cache.get(cacheKey); continue; }
+        const parent = currentParent;
+        const resolveFolder = (async () => {
+            // Reuse an existing folder with the same name under this parent
+            let query = supabase.from('folders').select('id').eq('name', folderName);
+            query = parent == null ? query.is('parent_folder_id', null) : query.eq('parent_folder_id', parent);
+            const { data: existing } = await query.limit(1).maybeSingle();
+            if (existing?.id) return existing.id;
+            const created = await createFolder({ name: folderName, parent_folder_id: parent ?? null });
+            return created.id;
+        })();
+        // Cache the in-flight promise so parallel uploads share one lookup/creation.
+        cache?.set(cacheKey, resolveFolder);
+        currentParent = await resolveFolder;
     }
 
     return currentParent;
@@ -128,33 +116,77 @@ export async function deleteFolder(id) {
     if (error) throw error
 }
 
+const chunk = (arr, n) => {
+    const out = []
+    for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n))
+    return out
+}
+
 /**
- * 폴더와 그 모든 하위 폴더, 그리고 그 안의 모든 파일(스토리지 포함)을 삭제한다.
- * @param {string} id            삭제할 폴더 ID
- * @param {Array} allFolders     listAllFolders() 결과 (하위 폴더 탐색용)
+ * 여러 파일 + 폴더(하위 폴더/파일 포함)를 일괄 삭제한다. 요청을 묶어서(batch) 병렬로 보내므로 빠르다.
+ * @param {Object} opts
+ * @param {Array}  opts.files       삭제할 파일들 ({id, storage_path})
+ * @param {Array}  opts.folderIds   삭제할 폴더 ID들
+ * @param {Array}  opts.allFolders  listAllFolders() 결과 (하위 폴더 탐색용)
+ * @param {Function} opts.onProgress 0~1
  */
-export async function deleteFolderTree(id, allFolders = []) {
-    const ids = [id]
-    for (let i = 0; i < ids.length; i++) {
-        for (const f of allFolders) if (f.parent_folder_id === ids[i] && !ids.includes(f.id)) ids.push(f.id)
+export async function deleteItems({ files = [], folderIds = [], allFolders = [], onProgress } = {}) {
+    // 1. 삭제 대상 폴더 트리 전체 ID 수집
+    const treeIds = new Set(folderIds)
+    const byParent = new Map()
+    for (const f of allFolders) {
+        const k = f.parent_folder_id || null
+        if (!byParent.has(k)) byParent.set(k, [])
+        byParent.get(k).push(f.id)
+    }
+    const stack = [...folderIds]
+    while (stack.length) {
+        for (const c of byParent.get(stack.pop()) || []) {
+            if (!treeIds.has(c)) { treeIds.add(c); stack.push(c) }
+        }
     }
 
-    const { data: filesInTree, error: listError } = await supabase
-        .from('files')
-        .select('id, storage_path')
-        .in('folder_id', ids)
-    if (listError) throw listError
+    // 2. 폴더 안 파일 조회 (병렬)
+    const inTree = (await Promise.all(
+        chunk([...treeIds], 100).map(async (ids) => {
+            const { data, error } = await supabase.from('files').select('id, storage_path').in('folder_id', ids)
+            if (error) throw error
+            return data || []
+        })
+    )).flat()
 
-    if (filesInTree && filesInTree.length > 0) {
-        const paths = filesInTree.map(f => f.storage_path).filter(Boolean)
-        if (paths.length > 0) await supabase.storage.from('files').remove(paths)
-        const { error } = await supabase.from('files').delete().in('id', filesInTree.map(f => f.id))
+    const all = new Map()
+    for (const f of [...files, ...inTree]) all.set(f.id, f)
+    const list = [...all.values()]
+    onProgress?.(0.2)
+
+    // 3. 스토리지 객체 삭제 + DB 행 삭제 (100개씩 묶어서 병렬)
+    const paths = list.map((f) => f.storage_path).filter(Boolean)
+    await Promise.all(chunk(paths, 100).map(async (p) => {
+        const { error } = await supabase.storage.from('files').remove(p)
+        if (error) console.warn('Storage delete warning:', error)
+    }))
+    onProgress?.(0.6)
+    await Promise.all(chunk(list.map((f) => f.id), 100).map(async (ids) => {
+        const { error } = await supabase.from('files').delete().in('id', ids)
+        if (error) throw error
+    }))
+    onProgress?.(0.9)
+
+    // 4. 폴더 삭제 (하위 폴더는 ON DELETE CASCADE)
+    if (folderIds.length) {
+        const { error } = await supabase.from('folders').delete().in('id', folderIds)
         if (error) throw error
     }
+    onProgress?.(1)
+}
 
-    // 하위 폴더는 ON DELETE CASCADE 로 함께 삭제된다
-    const { error } = await supabase.from('folders').delete().eq('id', id)
-    if (error) throw error
+export async function deleteFiles(files) {
+    return deleteItems({ files })
+}
+
+export async function deleteFolderTree(id, allFolders = []) {
+    return deleteItems({ folderIds: [id], allFolders })
 }
 
 // ============================================================
@@ -189,7 +221,7 @@ export class UploadAbortError extends Error {
     }
 }
 
-export async function uploadFile({ file, folderId = null, description = '', category = null, published = true, relativePath = null, signal = null }) {
+export async function uploadFile({ file, folderId = null, description = '', category = null, published = true, relativePath = null, signal = null, folderCache = null }) {
     if (signal?.aborted) throw new UploadAbortError();
     // 1. Generate safe path (short hash to avoid Supabase Storage path length limit ~255 chars)
     const timestamp = Date.now()
@@ -198,17 +230,18 @@ export async function uploadFile({ file, folderId = null, description = '', cate
     const ext = extMatch ? extMatch[0] : ''
     // Short hash of filename using simple hash
     const fileNameHash = Array.from(file.name).reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, timestamp).toString(36)
-    let path = `${timestamp}_${fileNameHash}${ext}`
+    const uniq = Math.random().toString(36).slice(2, 6)
+    let path = `${timestamp}_${fileNameHash}${uniq}${ext}`
     let displayName = file.name
 
     let finalFolderId = folderId
 
     if (relativePath) {
       // Preserve folder structure: create nested folders and place file inside the deepest one
-      finalFolderId = await ensureFolderPath(relativePath, folderId)
+      finalFolderId = await ensureFolderPath(relativePath, folderId, folderCache)
       displayName = relativePath.split('/').pop() || file.name   // just the filename
       const safeRel = relativePath.replace(/[^a-zA-Z0-9._/-]/g, '_')
-      path = `${safeRel.replace(/\//g, '_')}_${timestamp}_${fileNameHash}${ext}`
+      path = `${safeRel.replace(/\//g, '_')}_${timestamp}_${fileNameHash}${uniq}${ext}`
     }
 
     const finalCategory = category || detectCategory(file.type)

@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getSession, clearSession } from "@/lib/auth";
-import { listFiles, listFolders, listAllFolders, buildFolderPathMap, deleteFolderTree, deleteFile, updateFolder, toggleFilePublished, moveFileToFolder, moveFolderToFolder, handleDownload, downloadFilesAsZip } from "@/api/fileService";
+import { listFiles, listFolders, listAllFolders, buildFolderPathMap, deleteFolderTree, deleteItems, deleteFile, updateFolder, toggleFilePublished, moveFileToFolder, moveFolderToFolder, handleDownload, downloadFilesAsZip } from "@/api/fileService";
 import { supabase } from "@/api/supabaseClient";
 import Sidebar from "@/components/Sidebar";
 import MobileSidebar from "@/components/MobileSidebar";
@@ -17,7 +17,6 @@ import EmptyState from "@/components/EmptyState";
 import DarkModeToggle from "@/components/DarkModeToggle";
 import ViewToggle from "@/components/ViewToggle";
 import ContextMenu from "@/components/ContextMenu";
-import PathPanel from "@/components/PathPanel";
 import {
   Loader2, HardDrive, ChevronRight, Home as HomeIcon, Upload, Download, X, Trash2, Pencil, ArrowUpDown, ChevronLeft, ChevronRight as ChevronRightIcon, Info, Lock, Globe, FolderOpen, FolderPlus, CheckSquare, RefreshCw, Eye, EyeOff, FolderSearch
 } from "lucide-react";
@@ -201,14 +200,10 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
 
   const filteredFileIds = useMemo(() => filteredFiles.map(f => f.id), [filteredFiles]);
 
-  // Everything the current user is allowed to see (used by the right-hand path panel)
+  // Folders the current user is allowed to see (feeds the sidebar folder tree)
   const visibleAllFolders = useMemo(
     () => (isManager ? allFolders : allFolders.filter((f) => !hiddenFolderIds.has(f.id))),
     [allFolders, isManager, hiddenFolderIds]
-  );
-  const visibleAllFiles = useMemo(
-    () => (isManager ? files : files.filter((f) => f.published !== false && (!f.folder_id || !hiddenFolderIds.has(f.folder_id)))),
-    [files, isManager, hiddenFolderIds]
   );
 
   const visibleFolders = useMemo(() => {
@@ -398,19 +393,17 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
     if (selFolders.length) parts.push(`${selFolders.length} folder(s) with everything inside`);
     if (!confirm(`Delete ${parts.join(" and ")}? This cannot be undone.`)) return;
     const taskId = addTask("delete", `Deleting ${total} item(s)`);
-    let done = 0;
-    for (const file of selFiles) {
-      try { await deleteFile(file); } catch (e) { console.warn(e); }
-      updateTask(taskId, { progress: Math.round((++done / total) * 100) });
-    }
-    for (const folder of selFolders) {
-      try { await deleteFolderTree(folder.id, allFolders); } catch (e) { console.warn(e); }
-      updateTask(taskId, { progress: Math.round((++done / total) * 100) });
-    }
-    updateTask(taskId, { progress: 100, status: "done" });
-    toast.success(`${total} item(s) deleted`);
-    setTimeout(() => removeTask(taskId), 2000);
     clearSelection();
+    try {
+      await deleteItems({ files: selFiles, folderIds: selFolders.map((f) => f.id), allFolders, onProgress: (p) => updateTask(taskId, { progress: Math.round(p * 100) }) });
+      updateTask(taskId, { progress: 100, status: "done" });
+      toast.success(`${total} item(s) deleted`);
+    } catch (e) {
+      console.warn(e);
+      updateTask(taskId, { status: "error", error: e.message });
+      toast.error(e.message || "Delete failed");
+    }
+    setTimeout(() => removeTask(taskId), 2000);
     invalidateAll();
   };
 
@@ -800,6 +793,10 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
     managerName,
     onLoginClick: () => window.location.href = '/login',
     onLogout: handleLogout,
+    folders: visibleAllFolders,
+    currentFolder,
+    folderPath,
+    onFolderNavigate: (f) => { clearSelection(); setSearch(""); setCurrentFolder(f); setCategory("all"); },
   };
 
   return (
@@ -831,7 +828,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
         <Sidebar {...sidebarProps} />
       </div>
 
-      <main className="lg:ml-64 xl:mr-80">
+      <main className="lg:ml-64">
         {/* Top bar */}
         <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-md border-b border-border px-4 sm:px-6 lg:px-8 py-4 flex items-center gap-3">
           <MobileSidebar {...sidebarProps} />
@@ -1108,15 +1105,6 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
           )}
         </div>
       </main>
-
-      <PathPanel
-        folders={visibleAllFolders}
-        files={visibleAllFiles}
-        currentFolder={currentFolder}
-        path={folderPath}
-        onNavigate={(f) => { clearSelection(); setSearch(""); setCurrentFolder(f); setCategory("all"); }}
-        selection={selection}
-      />
 
       <UploadDialog
         open={uploadOpen}
