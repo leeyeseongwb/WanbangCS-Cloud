@@ -68,8 +68,6 @@ export default function EditFileDialog({ open, onOpenChange, file, onUpdated }) 
             >
               <option value="document">Document</option>
               <option value="image">Image</option>
-              <option value="video">Video</option>
-              <option value="audio">Audio</option>
               <option value="archive">Archive</option>
               <option value="other">Other</option>
             </select>

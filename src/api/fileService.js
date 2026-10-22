@@ -128,6 +128,35 @@ export async function deleteFolder(id) {
     if (error) throw error
 }
 
+/**
+ * 폴더와 그 모든 하위 폴더, 그리고 그 안의 모든 파일(스토리지 포함)을 삭제한다.
+ * @param {string} id            삭제할 폴더 ID
+ * @param {Array} allFolders     listAllFolders() 결과 (하위 폴더 탐색용)
+ */
+export async function deleteFolderTree(id, allFolders = []) {
+    const ids = [id]
+    for (let i = 0; i < ids.length; i++) {
+        for (const f of allFolders) if (f.parent_folder_id === ids[i] && !ids.includes(f.id)) ids.push(f.id)
+    }
+
+    const { data: filesInTree, error: listError } = await supabase
+        .from('files')
+        .select('id, storage_path')
+        .in('folder_id', ids)
+    if (listError) throw listError
+
+    if (filesInTree && filesInTree.length > 0) {
+        const paths = filesInTree.map(f => f.storage_path).filter(Boolean)
+        if (paths.length > 0) await supabase.storage.from('files').remove(paths)
+        const { error } = await supabase.from('files').delete().in('id', filesInTree.map(f => f.id))
+        if (error) throw error
+    }
+
+    // 하위 폴더는 ON DELETE CASCADE 로 함께 삭제된다
+    const { error } = await supabase.from('folders').delete().eq('id', id)
+    if (error) throw error
+}
+
 // ============================================================
 // File API
 // ============================================================
@@ -146,8 +175,6 @@ export async function listFiles() {
 function detectCategory(mimeType) {
     if (!mimeType) return 'other'
     if (mimeType.startsWith('image/')) return 'image'
-    if (mimeType.startsWith('video/')) return 'video'
-    if (mimeType.startsWith('audio/')) return 'audio'
     if (mimeType.includes('pdf') || mimeType.includes('document') || mimeType.includes('text') || mimeType.includes('sheet') || mimeType.includes('presentation')) return 'document'
     if (mimeType.includes('zip') || mimeType.includes('rar') || mimeType.includes('tar') || mimeType.includes('gzip') || mimeType.includes('7z')) return 'archive'
     return 'other'

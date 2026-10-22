@@ -15,6 +15,21 @@ const colorMap = {
   amber:   { bg: "bg-amber-500/10",   icon: "text-amber-500",   border: "hover:border-amber-300 dark:hover:border-amber-700" },
 };
 
+
+function SelectBox({ selected, onSelect, folder, className = "" }) {
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onSelect && onSelect(folder.id); }}
+      className={`transition-opacity ${selected ? "opacity-100" : "opacity-0 group-hover:opacity-60"} ${className}`}
+      aria-label="Select folder"
+    >
+      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${selected ? "bg-primary border-primary" : "border-muted-foreground bg-card"}`}>
+        {selected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>}
+      </div>
+    </button>
+  );
+}
+
 // Inline Public/Private toggle for folders (manager only) — mirrors the file PublishToggle
 function VisibilityToggle({ folder, onToggleVisibility, small = false }) {
   const isPublic = folder.is_public !== false;
@@ -35,18 +50,21 @@ function VisibilityToggle({ folder, onToggleVisibility, small = false }) {
 }
 
 // Grid folder card
-function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, onDownload, onToggleVisibility, isManager, onDragStart, onDragOver, onDrop, onContextMenu }) {
+function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, onDownload, onToggleVisibility, isManager, onDragStart, onDragOver, onDrop, onContextMenu, selected, onSelect }) {
   const c = colorMap[folder.color || "blue"];
   return (
     <div
       draggable={isManager && !!onDragStart}
       onDragStart={isManager && onDragStart ? (e) => onDragStart(e, folder) : undefined}
+      data-selectable="true"
+      data-id={folder.id}
       onClick={onClick}
       onDragOver={isManager ? onDragOver : undefined}
       onDrop={isManager ? onDrop : undefined}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu && onContextMenu(e, folder); }}
-      className={`group relative bg-card border border-border rounded-2xl p-5 cursor-pointer hover:shadow-lg flex-shrink-0 min-w-[220px] transition-all duration-300 ${c.border}`}
+      className={`group relative bg-card border border-border rounded-2xl p-5 cursor-pointer hover:shadow-lg flex-shrink-0 min-w-[220px] transition-all duration-300 ${c.border} ${selected ? "!border-primary ring-2 ring-primary/30" : ""}`}
     >
+      <SelectBox selected={selected} onSelect={onSelect} folder={folder} className="absolute top-3 left-3 z-10" />
       <div className="flex items-start justify-between mb-3">
         <div className={`relative w-12 h-12 rounded-xl flex items-center justify-center ${c.bg}`}>
           <Folder className={`h-6 w-6 ${c.icon}`} />
@@ -115,18 +133,21 @@ function GridFolder({ folder, fileCount, onClick, onDelete, onEdit, onDownload, 
 }
 
 // Compact folder
-function CompactFolder({ folder, fileCount, onClick, onToggleVisibility, isManager, onDragStart, onDragOver, onDrop, onContextMenu }) {
+function CompactFolder({ folder, fileCount, onClick, onToggleVisibility, isManager, onDragStart, onDragOver, onDrop, onContextMenu, selected, onSelect }) {
   const c = colorMap[folder.color || "blue"];
   return (
     <div
       draggable={isManager && !!onDragStart}
       onDragStart={isManager && onDragStart ? (e) => onDragStart(e, folder) : undefined}
+      data-selectable="true"
+      data-id={folder.id}
       onClick={onClick}
       onDragOver={isManager ? onDragOver : undefined}
       onDrop={isManager ? onDrop : undefined}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu && onContextMenu(e, folder); }}
-      className={`group relative bg-card border border-border rounded-xl p-3 cursor-pointer hover:shadow-md transition-all duration-200 flex flex-col items-center text-center gap-2 ${c.border}`}
+      className={`group relative bg-card border border-border rounded-xl p-3 cursor-pointer hover:shadow-md transition-all duration-200 flex flex-col items-center text-center gap-2 ${c.border} ${selected ? "!border-primary ring-2 ring-primary/30" : ""}`}
     >
+      <SelectBox selected={selected} onSelect={onSelect} folder={folder} className="absolute top-1.5 left-1.5 z-10 scale-75 origin-top-left" />
       {/* Public/Private toggle (manager only) */}
       {isManager && onToggleVisibility && (
         <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
@@ -148,18 +169,21 @@ function CompactFolder({ folder, fileCount, onClick, onToggleVisibility, isManag
 }
 
 // List folder row
-function ListFolder({ folder, fileCount, onClick, onDelete, onEdit, onToggleVisibility, isManager, onDragStart, onDragOver, onDrop, onContextMenu }) {
+function ListFolder({ folder, fileCount, onClick, onDelete, onEdit, onToggleVisibility, isManager, onDragStart, onDragOver, onDrop, onContextMenu, selected, onSelect }) {
   const c = colorMap[folder.color || "blue"];
   return (
     <div
       draggable={isManager && !!onDragStart}
       onDragStart={isManager && onDragStart ? (e) => onDragStart(e, folder) : undefined}
+      data-selectable="true"
+      data-id={folder.id}
       onClick={onClick}
       onDragOver={isManager ? onDragOver : undefined}
       onDrop={isManager ? onDrop : undefined}
       onContextMenu={(e) => { e.preventDefault(); onContextMenu && onContextMenu(e, folder); }}
-      className={`group flex items-center gap-3 px-4 py-2.5 bg-card border-b border-border hover:bg-secondary/40 transition-colors cursor-pointer`}
+      className={`group flex items-center gap-3 px-4 py-2.5 bg-card border-b border-border hover:bg-secondary/40 transition-colors cursor-pointer ${selected ? "bg-primary/5" : ""}`}
     >
+      <SelectBox selected={selected} onSelect={onSelect} folder={folder} className="flex-shrink-0" />
       <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${c.bg}`}>
         <Folder className={`h-4 w-4 ${c.icon}`} />
       </div>
@@ -208,8 +232,12 @@ function ListFolder({ folder, fileCount, onClick, onDelete, onEdit, onToggleVisi
   );
 }
 
-export default function FolderCard({ folder, fileCount, onClick, onDelete, onEdit, onDownload, onToggleVisibility, isManager, view = "grid", onDragStart, onDragOver, onDrop, onContextMenu }) {
-  const props = { folder, fileCount, onClick, onDelete, onEdit, onDownload, onToggleVisibility, isManager, onDragStart, onDragOver, onDrop, onContextMenu };
+export default function FolderCard({ folder, fileCount, onClick, onDelete, onEdit, onDownload, onToggleVisibility, isManager, view = "grid", onDragStart, onDragOver, onDrop, onContextMenu, selected, onSelect }) {
+  const handleClick = (e) => {
+    if (onSelect && (e.ctrlKey || e.metaKey || e.shiftKey)) { e.preventDefault(); onSelect(folder.id, e.shiftKey); return; }
+    onClick && onClick(e);
+  };
+  const props = { folder, fileCount, onClick: handleClick, onDelete, onEdit, onDownload, onToggleVisibility, isManager, onDragStart, onDragOver, onDrop, onContextMenu, selected, onSelect };
   if (view === "list") return <ListFolder {...props} />;
   if (view === "compact") return <CompactFolder {...props} />;
   return <GridFolder {...props} />;

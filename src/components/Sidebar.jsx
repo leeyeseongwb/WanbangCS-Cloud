@@ -1,13 +1,12 @@
-import { HardDrive, FileText, Image, Video, Music, Archive, FolderOpen, Upload, FolderPlus, LogIn, LogOut, User } from "lucide-react";
+import { HardDrive, FileText, Image, Archive, File, FolderOpen, Upload, FolderPlus, LogIn, LogOut, User } from "lucide-react";
 import DarkModeToggle from "./DarkModeToggle";
 
 const categories = [
-{ key: "all", label: "All Files", icon: FolderOpen },
+{ key: "all", label: "My Drive", icon: HardDrive },
 { key: "document", label: "Documents", icon: FileText },
 { key: "image", label: "Images", icon: Image },
-{ key: "video", label: "Videos", icon: Video },
-{ key: "audio", label: "Audio", icon: Music },
-{ key: "archive", label: "Archives", icon: Archive }];
+{ key: "archive", label: "Archives", icon: Archive },
+{ key: "other", label: "Other", icon: File }];
 
 
 export default function Sidebar({ activeCategory, onCategoryChange, onUploadClick, onNewFolderClick, isManager, managerName, onLoginClick, onLogout }) {

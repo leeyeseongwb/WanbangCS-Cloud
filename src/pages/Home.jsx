@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getSession, clearSession } from "@/lib/auth";
-import { listFiles, listFolders, listAllFolders, buildFolderPathMap, deleteFolder, deleteFile, updateFolder, moveFileToFolder, moveFolderToFolder, handleDownload, downloadFilesAsZip } from "@/api/fileService";
+import { listFiles, listFolders, listAllFolders, buildFolderPathMap, deleteFolderTree, deleteFile, updateFolder, toggleFilePublished, moveFileToFolder, moveFolderToFolder, handleDownload, downloadFilesAsZip } from "@/api/fileService";
 import { supabase } from "@/api/supabaseClient";
 import Sidebar from "@/components/Sidebar";
 import MobileSidebar from "@/components/MobileSidebar";
@@ -17,8 +17,9 @@ import EmptyState from "@/components/EmptyState";
 import DarkModeToggle from "@/components/DarkModeToggle";
 import ViewToggle from "@/components/ViewToggle";
 import ContextMenu from "@/components/ContextMenu";
+import PathPanel from "@/components/PathPanel";
 import {
-  Loader2, HardDrive, ChevronRight, Home as HomeIcon, Upload, Download, X, Trash2, Pencil, ArrowUpDown, ChevronLeft, ChevronRight as ChevronRightIcon, Info, Lock, Globe
+  Loader2, HardDrive, ChevronRight, Home as HomeIcon, Upload, Download, X, Trash2, Pencil, ArrowUpDown, ChevronLeft, ChevronRight as ChevronRightIcon, Info, Lock, Globe, FolderOpen, FolderPlus, CheckSquare, RefreshCw, Eye, EyeOff, FolderSearch
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -74,12 +75,12 @@ const [selectedIds, setSelectedIds] = useState(new Set());
 const selectedIdsRef = useRef(selectedIds);        
 useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]); 
   const [lastSelectedId, setLastSelectedId] = useState(null);
+  const orderedIdsRef = useRef([]); // folder ids then file ids, in on-screen order
   const toggleSelect = useCallback((id, shiftKey) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
       if (shiftKey && lastSelectedId) {
-        // Find all file IDs in current view
-        const idsInView = filteredFileIds;
+        const idsInView = orderedIdsRef.current;
         const idx1 = idsInView.indexOf(lastSelectedId);
         const idx2 = idsInView.indexOf(id);
         if (idx1 !== -1 && idx2 !== -1) {
@@ -200,6 +201,16 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
 
   const filteredFileIds = useMemo(() => filteredFiles.map(f => f.id), [filteredFiles]);
 
+  // Everything the current user is allowed to see (used by the right-hand path panel)
+  const visibleAllFolders = useMemo(
+    () => (isManager ? allFolders : allFolders.filter((f) => !hiddenFolderIds.has(f.id))),
+    [allFolders, isManager, hiddenFolderIds]
+  );
+  const visibleAllFiles = useMemo(
+    () => (isManager ? files : files.filter((f) => f.published !== false && (!f.folder_id || !hiddenFolderIds.has(f.folder_id)))),
+    [files, isManager, hiddenFolderIds]
+  );
+
   const visibleFolders = useMemo(() => {
     if (search.trim()) return [];
     // 일반 사용자에게는 private 폴더(및 하위)를 숨김
@@ -228,6 +239,20 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
     return chain;
   }, [currentFolder, allFolders]);
 
+  orderedIdsRef.current = [...visibleFolders.map((f) => f.id), ...filteredFileIds];
+
+  const selection = useMemo(() => {
+    const selFiles = files.filter((f) => selectedIds.has(f.id));
+    const selFolders = allFolders.filter((f) => selectedIds.has(f.id));
+    return {
+      selFiles, selFolders,
+      count: selFiles.length + selFolders.length,
+      files: selFiles.length,
+      folders: selFolders.length,
+      size: selFiles.reduce((sum, f) => sum + (f.file_size || 0), 0),
+    };
+  }, [files, allFolders, selectedIds]);
+
   const totalPages = Math.max(1, Math.ceil(filteredFiles.length / PAGE_SIZE));
   const paginatedFiles = useMemo(() => {
     const start = (currentPage - 1) * PAGE_SIZE;
@@ -240,41 +265,100 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
   const fileCountForFolder = (folderId) => files.filter((f) => f.folder_id === folderId).length;
   const folderTotalSize = (folderId) => files.filter((f) => f.folder_id === folderId).reduce((sum, f) => sum + (f.file_size || 0), 0);
 
-  const handleFileContextMenu = useCallback((e, file) => {
-    const items = [
-      { icon: Download, label: "Download", onClick: () => handleDownload(file) },
-    ];
-    if (isManager) {
-      items.push(
-        { icon: Pencil, label: "Edit", onClick: () => { setEditingFile(file); setEditFileOpen(true); } },
-        { icon: Trash2, label: "Delete", onClick: () => handleDeleteFile(file) },
-      );
-    }
-    openContextMenu(e, items);
-  }, [openContextMenu, isManager]);
+  const openFolder = (folder) => { clearSelection(); setSearch(""); setCurrentFolder(folder); setCategory("all"); };
 
-  const handleFolderContextMenu = useCallback((e, folder) => {
-    const items = [
-      { icon: Info, label: "Folder Info", onClick: () => { setInfoFolder(folder); setFolderInfoOpen(true); } },
-      {
-        icon: Download,
-        label: `Download folder (ZIP)`,
-        onClick: () => handleFolderDownload(folder),
-      },
-    ];
+  // Right-click selects the item (like Google Drive) unless it is already part of a multi-selection.
+  const selectForMenu = (id) => {
+    if (selectedIds.has(id)) return;
+    setSelectedIds(new Set([id]));
+    setLastSelectedId(id);
+  };
+
+  const selectionMenu = () => [
+    { header: `${selection.count} items selected` },
+    { icon: Download, label: "Download as ZIP", onClick: () => handleBulkDownload() },
+    ...(isManager ? [{ separator: true }, { icon: Trash2, label: "Delete", shortcut: "Del", danger: true, onClick: () => handleBulkDelete() }] : []),
+    { separator: true },
+    { icon: X, label: "Clear selection", shortcut: "Esc", onClick: clearSelection },
+  ];
+
+  const handleFileContextMenu = (e, file) => {
+    selectForMenu(file.id);
+    if (selectedIds.has(file.id) && selectedIds.size > 1) return openContextMenu(e, selectionMenu());
+    const items = [{ icon: Download, label: "Download", onClick: () => handleDownload(file) }];
+    if (search.trim() && file.folder_id) {
+      const parent = allFolders.find((f) => f.id === file.folder_id);
+      if (parent) items.push({ icon: FolderSearch, label: "Show in folder", onClick: () => openFolder(parent) });
+    }
     if (isManager) {
+      const hidden = file.published === false;
       items.push(
+        { separator: true },
+        { icon: Pencil, label: "Rename / edit details", onClick: () => { setEditingFile(file); setEditFileOpen(true); } },
         {
-          icon: folder.is_public === false ? Globe : Lock,
-          label: folder.is_public === false ? "Make Public" : "Make Private",
-          onClick: () => handleToggleFolderVisibility(folder),
+          icon: hidden ? Eye : EyeOff,
+          label: hidden ? "Publish to users" : "Hide from users",
+          onClick: async () => {
+            try {
+              await toggleFilePublished(file.id, hidden);
+              toast.success(hidden ? "File is now visible to users." : "File is now hidden from users.");
+              queryClient.invalidateQueries({ queryKey: ["files"] });
+            } catch (err) { toast.error(err.message || "Failed to update file"); }
+          },
         },
-        { icon: Pencil, label: "Edit Folder", onClick: () => { setEditingFolder(folder); setEditFolderOpen(true); } },
-        { icon: Trash2, label: "Delete Folder", onClick: () => handleDeleteFolder(folder) },
+        { separator: true },
+        { icon: Trash2, label: "Delete", shortcut: "Del", danger: true, onClick: () => handleDeleteFile(file) },
       );
     }
     openContextMenu(e, items);
-  }, [files, openContextMenu, isManager]);
+  };
+
+  const handleFolderContextMenu = (e, folder) => {
+    selectForMenu(folder.id);
+    if (selectedIds.has(folder.id) && selectedIds.size > 1) return openContextMenu(e, selectionMenu());
+    const items = [
+      { icon: FolderOpen, label: "Open", onClick: () => openFolder(folder) },
+      { icon: Download, label: "Download as ZIP", onClick: () => handleFolderDownload(folder) },
+      { separator: true },
+      { icon: Info, label: "Folder information", onClick: () => { setInfoFolder(folder); setFolderInfoOpen(true); } },
+    ];
+    if (isManager) {
+      items.push(
+        { icon: folder.is_public === false ? Globe : Lock, label: folder.is_public === false ? "Make public" : "Make private", onClick: () => handleToggleFolderVisibility(folder) },
+        { icon: Pencil, label: "Rename / edit folder", onClick: () => { setEditingFolder(folder); setEditFolderOpen(true); } },
+        { separator: true },
+        { icon: Trash2, label: "Delete", shortcut: "Del", danger: true, onClick: () => handleDeleteFolder(folder) },
+      );
+    }
+    openContextMenu(e, items);
+  };
+
+  // Right-click on empty space
+  const handleBackgroundContextMenu = (e) => {
+    if (e.target.closest('[data-selectable]')) return;
+    const items = [];
+    if (isManager) {
+      items.push(
+        { icon: FolderPlus, label: "New folder", onClick: () => setFolderDialogOpen(true) },
+        { icon: Upload, label: "Upload files", onClick: () => setUploadOpen(true) },
+        { separator: true },
+      );
+    }
+    items.push(
+      { icon: CheckSquare, label: "Select all", shortcut: "Ctrl+A", onClick: () => setSelectedIds(new Set(orderedIdsRef.current)) },
+      { icon: Download, label: "Download everything here (ZIP)", disabled: visibleFolders.length + filteredFiles.length === 0, onClick: () => downloadItems(filteredFiles, visibleFolders) },
+      { separator: true },
+      { icon: RefreshCw, label: "Refresh", onClick: () => { invalidateAll(); toast.success("Refreshed"); } },
+    );
+    if (currentFolder) {
+      const parent = allFolders.find((f) => f.id === currentFolder.parent_folder_id) || null;
+      items.unshift(
+        { icon: ChevronLeft, label: "Back to parent folder", onClick: () => { clearSelection(); setCurrentFolder(parent); } },
+        { separator: true },
+      );
+    }
+    openContextMenu(e, items);
+  };
 
   const handleToggleFolderVisibility = async (folder) => {
     const next = !(folder.is_public !== false); // toggle
@@ -306,33 +390,49 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
   };
 
   const handleBulkDelete = async () => {
-    const toDelete = filteredFiles.filter(f => selectedIds.has(f.id));
-    if (toDelete.length === 0) return;
-    if (!confirm(`Delete ${toDelete.length} file(s)? This cannot be undone.`)) return;
-    const taskId = addTask("delete", `Deleting ${toDelete.length} file(s)`);
+    const { selFiles, selFolders } = selection;
+    const total = selFiles.length + selFolders.length;
+    if (total === 0) return;
+    const parts = [];
+    if (selFiles.length) parts.push(`${selFiles.length} file(s)`);
+    if (selFolders.length) parts.push(`${selFolders.length} folder(s) with everything inside`);
+    if (!confirm(`Delete ${parts.join(" and ")}? This cannot be undone.`)) return;
+    const taskId = addTask("delete", `Deleting ${total} item(s)`);
     let done = 0;
-    for (const file of toDelete) {
+    for (const file of selFiles) {
       try { await deleteFile(file); } catch (e) { console.warn(e); }
-      done++;
-      updateTask(taskId, { progress: Math.round((done / toDelete.length) * 100) });
+      updateTask(taskId, { progress: Math.round((++done / total) * 100) });
+    }
+    for (const folder of selFolders) {
+      try { await deleteFolderTree(folder.id, allFolders); } catch (e) { console.warn(e); }
+      updateTask(taskId, { progress: Math.round((++done / total) * 100) });
     }
     updateTask(taskId, { progress: 100, status: "done" });
-    toast.success(`${toDelete.length} file(s) deleted`);
+    toast.success(`${total} item(s) deleted`);
     setTimeout(() => removeTask(taskId), 2000);
-    queryClient.invalidateQueries({ queryKey: ["files"] });
     clearSelection();
+    invalidateAll();
   };
 
   const handleDeleteFolder = async (folder) => {
-    const count = fileCountForFolder(folder.id);
-    if (count > 0) { toast.error(`Folder has ${count} file(s). Move or delete them first.`); return; }
+    const count = allFiles_inTree(folder).length;
+    const msg = count > 0
+      ? `Delete folder "${folder.name}" and the ${count} file(s) inside it? This cannot be undone.`
+      : `Delete folder "${folder.name}"? This cannot be undone.`;
+    if (!confirm(msg)) return;
     try {
-      await deleteFolder(folder.id);
+      await deleteFolderTree(folder.id, allFolders);
       toast.success("Folder deleted");
-      queryClient.invalidateQueries({ queryKey: ["folders"] });
+      clearSelection();
+      invalidateAll();
     } catch (err) {
       toast.error(err.message || "Failed to delete folder");
     }
+  };
+
+  const allFiles_inTree = (folder) => {
+    const ids = Object.keys(buildFolderPathMap(allFolders, folder));
+    return files.filter((f) => ids.includes(f.folder_id));
   };
 
   // 재귀적으로 모든 하위 폴더 ID 수집
@@ -417,28 +517,42 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
     }
   };
 
-  const handleBulkDownload = async () => {
-    const toDownload = filteredFiles.filter(f => selectedIds.has(f.id));
-    if (toDownload.length === 0) return;
-    clearSelection();
-
-    if (toDownload.length === 1) {
+  // Download any mix of files and folders as ONE zip (folders keep their structure).
+  const downloadItems = async (selFiles, selFolders) => {
+    if (selFiles.length === 1 && selFolders.length === 0) {
       try {
-        await handleDownload(toDownload[0]);
-        toast.success(`Downloaded ${toDownload[0].name}`);
+        await handleDownload(selFiles[0]);
+        toast.success(`Downloaded ${selFiles[0].name}`);
       } catch (e) { console.warn(e); toast.error('Download failed'); }
       return;
     }
 
+    const safe = (name) => (name || "file").replace(/[\\/:*?"<>|]/g, "_");
+    const entries = new Map(); // file.id -> path inside zip
+    for (const folder of selFolders) {
+      const pathMap = buildFolderPathMap(allFolders, folder);
+      for (const f of files) {
+        if (!f.folder_id || !(f.folder_id in pathMap)) continue;
+        if (!isManager && (f.published === false || hiddenFolderIds.has(f.folder_id))) continue;
+        entries.set(f.id, [safe(folder.name), pathMap[f.folder_id], safe(f.name)].filter(Boolean).join("/"));
+      }
+    }
+    for (const f of selFiles) if (!entries.has(f.id)) entries.set(f.id, safe(f.name));
+
+    const toZip = files.filter((f) => entries.has(f.id));
+    if (toZip.length === 0) { toast.info("Nothing to download."); return; }
+
+    const zipName = selFiles.length === 0 && selFolders.length === 1
+      ? `${safe(selFolders[0].name)}.zip`
+      : `WBCS_Disk_${toZip.length}_files.zip`;
     const controller = new AbortController();
-    const taskId = addTask("download", `Downloading ${toDownload.length} file(s) as ZIP`);
+    const taskId = addTask("download", `Downloading ${toZip.length} file(s) as ZIP`);
     updateTask(taskId, { onCancel: () => controller.abort() });
     try {
-      if (typeof downloadFilesAsZip !== 'function') { toast.error('Download function not available'); removeTask(taskId); return; }
       const result = await downloadFilesAsZip(
-        toDownload,
+        toZip,
         (progress) => updateTask(taskId, { progress: Math.round(progress * 100) }),
-        { signal: controller.signal }
+        { signal: controller.signal, pathFor: (f) => entries.get(f.id), zipName }
       );
       if (result.success) {
         updateTask(taskId, { progress: 100, status: "done" });
@@ -456,6 +570,13 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
       updateTask(taskId, { status: "error", error: err.message });
       toast.error("ZIP download failed");
     }
+  };
+
+  const handleBulkDownload = async () => {
+    const { selFiles, selFolders } = selection;
+    if (selFiles.length + selFolders.length === 0) return;
+    clearSelection();
+    await downloadItems(selFiles, selFolders);
   };
 
   const handleCategoryChange = (cat) => {
@@ -478,19 +599,20 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
 
   // Drag & drop handlers
   const handleDragStart = useCallback((e, file) => {
-    const idsToMove = selectedIds.has(file.id) && selectedIds.size > 1
-      ? Array.from(selectedIds)
-      : [file.id];
-    e.dataTransfer.setData("fileIds", JSON.stringify(idsToMove));
+    const multi = selectedIds.has(file.id) && selectedIds.size > 1;
+    e.dataTransfer.setData("fileIds", JSON.stringify(multi ? selection.selFiles.map((f) => f.id) : [file.id]));
+    if (multi && selection.selFolders.length) e.dataTransfer.setData("folderIds", JSON.stringify(selection.selFolders.map((f) => f.id)));
     e.dataTransfer.effectAllowed = "move";
-  }, [selectedIds]);
+  }, [selectedIds, selection]);
 
   // Folder dragging (manager only) — used to move a folder into another folder
   // or up to a parent/root via the breadcrumb.
   const handleFolderDragStart = useCallback((e, folder) => {
-    e.dataTransfer.setData("folderIds", JSON.stringify([folder.id]));
+    const multi = selectedIds.has(folder.id) && selectedIds.size > 1;
+    e.dataTransfer.setData("folderIds", JSON.stringify(multi ? selection.selFolders.map((f) => f.id) : [folder.id]));
+    if (multi && selection.selFiles.length) e.dataTransfer.setData("fileIds", JSON.stringify(selection.selFiles.map((f) => f.id)));
     e.dataTransfer.effectAllowed = "move";
-  }, []);
+  }, [selectedIds, selection]);
 
   const handleDragOver = useCallback((e, folderId) => {
     e.preventDefault();
@@ -615,7 +737,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
       // Cmd/Ctrl + A: Select all visible files
       if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
         e.preventDefault();
-        const allIds = filteredFileIds;
+        const allIds = orderedIdsRef.current;
         setSelectedIds(new Set(allIds));
         if (allIds.length > 0) setLastSelectedId(allIds[allIds.length - 1]);
       }
@@ -709,7 +831,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
         <Sidebar {...sidebarProps} />
       </div>
 
-      <main className="lg:ml-64">
+      <main className="lg:ml-64 xl:mr-80">
         {/* Top bar */}
         <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-md border-b border-border px-4 sm:px-6 lg:px-8 py-4 flex items-center gap-3">
           <MobileSidebar {...sidebarProps} />
@@ -758,13 +880,15 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
         {/* Bulk action bar */}
         {selectedIds.size > 0 && (
           <div className="sticky top-[73px] z-10 bg-primary text-primary-foreground px-4 sm:px-6 lg:px-8 py-2.5 flex items-center gap-3">
-            <span className="text-sm font-medium">{selectedIds.size} file{selectedIds.size !== 1 ? "s" : ""} selected</span>
+            <span className="text-sm font-medium">
+              {[selection.files && `${selection.files} file${selection.files !== 1 ? "s" : ""}`, selection.folders && `${selection.folders} folder${selection.folders !== 1 ? "s" : ""}`].filter(Boolean).join(", ")} selected
+            </span>
             <button
               onClick={handleBulkDownload}
               className="flex items-center gap-1.5 bg-primary-foreground/20 hover:bg-primary-foreground/30 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
             >
               <Download className="h-4 w-4" />
-              Download
+              Download ZIP
             </button>
             {isManager && (
               <button
@@ -782,7 +906,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
         )}
 
         {/* Content */}
-        <div className="px-4 sm:px-6 lg:px-8 py-6 select-none" onMouseDown={handleMouseDown}>
+        <div className="px-4 sm:px-6 lg:px-8 py-6 select-none min-h-[calc(100vh-73px)]" onMouseDown={handleMouseDown} onContextMenu={handleBackgroundContextMenu}>
           {/* Drag selection box (viewport-based, fixed position) */}
           {dragBox && (
             <div
@@ -847,7 +971,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
           <div className="mb-5 flex items-center justify-between">
             <div>
               <h2 className="text-2xl font-semibold font-heading">
-                {search ? `Results for "${search}"` : currentFolder ? currentFolder.name : category === "all" ? "All Files" : category.charAt(0).toUpperCase() + category.slice(1) + "s"}
+                {search ? `Results for "${search}"` : currentFolder ? currentFolder.name : category === "all" ? "My Drive" : ({ document: "Documents", image: "Images", archive: "Archives", other: "Other files" }[category] || category)}
               </h2>
               <p className="text-sm text-muted-foreground mt-1">
                 {!search && !currentFolder && visibleFolders.length > 0 && (
@@ -877,7 +1001,9 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
                           key={folder.id}
                           folder={folder}
                           fileCount={fileCountForFolder(folder.id)}
-                          onClick={() => { clearSelection(); setCurrentFolder(folder); setCategory("all"); }}
+                          onClick={() => openFolder(folder)}
+                          selected={selectedIds.has(folder.id)}
+                          onSelect={(id, shift) => toggleSelect(id, shift)}
                           onDelete={isManager ? handleDeleteFolder : undefined}
                           onEdit={isManager ? () => { setEditingFolder(folder); setEditFolderOpen(true); } : undefined}
                           onToggleVisibility={isManager ? handleToggleFolderVisibility : undefined}
@@ -901,7 +1027,9 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
                           <FolderCard
                             folder={folder}
                             fileCount={fileCountForFolder(folder.id)}
-                            onClick={() => { clearSelection(); setCurrentFolder(folder); setCategory("all"); }}
+                            onClick={() => openFolder(folder)}
+                          selected={selectedIds.has(folder.id)}
+                          onSelect={(id, shift) => toggleSelect(id, shift)}
                             onDelete={isManager ? handleDeleteFolder : undefined}
                             onEdit={isManager ? () => { setEditingFolder(folder); setEditFolderOpen(true); } : undefined}
                             onDownload={handleFolderDownload}
@@ -980,6 +1108,15 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
           )}
         </div>
       </main>
+
+      <PathPanel
+        folders={visibleAllFolders}
+        files={visibleAllFiles}
+        currentFolder={currentFolder}
+        path={folderPath}
+        onNavigate={(f) => { clearSelection(); setSearch(""); setCurrentFolder(f); setCategory("all"); }}
+        selection={selection}
+      />
 
       <UploadDialog
         open={uploadOpen}
