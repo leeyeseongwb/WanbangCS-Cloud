@@ -1,6 +1,8 @@
-# Wanbang CS Cloud
+# WBCS Online Disk
 
-Online Cloud Storage for Wanbang Computer Science Team
+Online Cloud Storage for Harbin Wanbang School Computer Science Weekend Elective
+
+This cloud was built for an alternative platform for Canvas Files
 
 ## 🚀 Setup
 
@@ -19,7 +21,7 @@ VITE_SUPABASE_URL=https://your-project-id.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-public-key-here
 
 # Manager Registration Code (used when Supabase settings table is unreachable)
-VITE_REGISTRATION_CODE=WanbangCS260606
+VITE_REGISTRATION_CODE=wbcsCloudAdmin
 ```
 
 ### 3. Run Supabase SQL
@@ -131,8 +133,8 @@ If the `settings` table is empty or you want to insert a new code via SQL:
 ```sql
 -- Insert or update the registration code
 INSERT INTO public.settings (key, value)
-VALUES ('registration_code', 'WanbangCS260606')
-ON CONFLICT (key) DO UPDATE SET value = 'WanbangCS260606';
+VALUES ('registration_code', 'wbcsCloudAdmin')
+ON CONFLICT (key) DO UPDATE SET value = 'wbcsCloudAdmin';
 ```
 
 Or simply run the full `supabase/schema.sql` file which includes this insert automatically.

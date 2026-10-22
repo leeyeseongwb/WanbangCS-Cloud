@@ -11,7 +11,7 @@ import DarkModeToggle from "@/components/DarkModeToggle";
 import { toast } from "sonner";
 
 // Registration code is read from .env only (no Supabase settings lookup)
-const REGISTRATION_CODE = import.meta.env.VITE_REGISTRATION_CODE || 'WanbangCS260606';
+const REGISTRATION_CODE = import.meta.env.VITE_REGISTRATION_CODE || 'wbcsCloudAdmin';
 
 export default function Register() {
   const [username, setUsername] = useState("");
