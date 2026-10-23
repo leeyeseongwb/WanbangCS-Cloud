@@ -194,14 +194,21 @@ export async function deleteFolderTree(id, allFolders = []) {
 // ============================================================
 
 export async function listFiles() {
-    const { data, error } = await supabase
-        .from('files')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(500)
-
-    if (error) throw error
-    return data || []
+    // Supabase는 요청당 최대 행 수가 제한되므로 페이지 단위로 전부 가져온다.
+    const PAGE = 1000
+    const all = []
+    for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+            .from('files')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .order('id', { ascending: true })
+            .range(from, from + PAGE - 1)
+        if (error) throw error
+        all.push(...(data || []))
+        if (!data || data.length < PAGE) break
+    }
+    return all
 }
 
 function detectCategory(mimeType) {
@@ -422,22 +429,81 @@ export async function toggleFilePublished(fileId, published) {
     return data
 }
 
+// Background task panel helpers (same window API Home.jsx uses)
+let _dlTaskId = 100000
+const taskApi = {
+    add(title) {
+        if (typeof window.addTask === 'function') return window.addTask('download', title)
+        const id = ++_dlTaskId
+        window.dispatchEvent(new CustomEvent('task:add', { detail: { id, type: 'download', title, progress: 0, status: 'running' } }))
+        return id
+    },
+    update(id, updates) {
+        if (typeof window.updateTask === 'function') return window.updateTask(id, updates)
+        window.dispatchEvent(new CustomEvent('task:update', { detail: { id, ...updates } }))
+    },
+    remove(id) {
+        if (typeof window.removeTask === 'function') return window.removeTask(id)
+        window.dispatchEvent(new CustomEvent('task:remove', { detail: { id } }))
+    },
+}
+
+function saveBlob(blob, name) {
+    const blobUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = blobUrl
+    a.download = name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000)
+}
+
+// 단일 파일 다운로드 (진행률 표시 + 취소 가능)
 export async function handleDownload(file) {
     if (!file?.file_url) return;
+    const url = file.storage_path
+        ? supabase.storage.from('files').getPublicUrl(file.storage_path).data.publicUrl
+        : file.file_url;
+
+    const controller = new AbortController();
+    const taskId = taskApi.add(`Downloading "${file.name}"`);
+    taskApi.update(taskId, { onCancel: () => controller.abort() });
     try {
-        const { data, error } = await supabase.storage.from('files').download(file.storage_path);
-        if (error) throw error;
-        const blobUrl = URL.createObjectURL(data);
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const total = Number(res.headers.get('content-length')) || file.file_size || 0;
+        const chunks = [];
+        let received = 0;
+        if (res.body?.getReader) {
+            const reader = res.body.getReader();
+            for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+                received += value.length;
+                if (total) taskApi.update(taskId, { progress: Math.min(99, Math.round((received / total) * 100)) });
+            }
+        } else {
+            chunks.push(new Uint8Array(await res.arrayBuffer()));
+        }
+        taskApi.update(taskId, { progress: 100, status: 'done' });
+        saveBlob(new Blob(chunks, { type: file.file_type || res.headers.get('content-type') || 'application/octet-stream' }), file.name);
+    } catch (err) {
+        if (err.name === 'AbortError') { taskApi.remove(taskId); return; }
+        console.error('Download error:', err);
+        taskApi.update(taskId, { status: 'error', error: err.message });
+        // Fallback: let the browser download it natively (no progress)
         const a = document.createElement('a');
-        a.href = blobUrl;
+        a.href = file.storage_path
+            ? supabase.storage.from('files').getPublicUrl(file.storage_path, { download: file.name }).data.publicUrl
+            : file.file_url;
         a.download = file.name;
         document.body.appendChild(a);
         a.click();
         a.remove();
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 3000);
-    } catch (err) {
-        console.error('Download error:', err);
-        window.open(file.file_url, '_blank');
+    } finally {
+        setTimeout(() => taskApi.remove(taskId), 2000);
     }
 }
 
@@ -518,34 +584,34 @@ export async function downloadFilesAsZip(files, onProgress, options = {}) {
         return `${dir}${base}_${usedNames[rawPath]}`;
     };
 
-    for (let i = 0; i < total; i++) {
-        if (signal?.aborted) return { success: false, count: 0, aborted: true, error: 'Download cancelled' };
-
-        const file = files[i];
-        if (!file?.storage_path) continue;
-        try {
-            const { data, error } = await supabase.storage
-                .from('files')
-                .download(file.storage_path);
-            if (error) {
-                console.warn(`Failed to download ${file.name}:`, error);
-                continue;
+    // 병렬 다운로드 (동시 6개). 순서대로 하나씩 받던 방식보다 훨씬 빠르다.
+    const CONCURRENCY = 6;
+    let next = 0;
+    let finished = 0;
+    const worker = async () => {
+        while (next < total) {
+            if (signal?.aborted) return;
+            const file = files[next++];
+            try {
+                if (file?.storage_path) {
+                    const { data, error } = await supabase.storage.from('files').download(file.storage_path);
+                    if (error) {
+                        console.warn(`Failed to download ${file.name}:`, error);
+                    } else {
+                        const zipPath = ensureUniquePath(pathFor ? pathFor(file) : file.name);
+                        zip.file(zipPath, data);
+                        downloadedCount++;
+                    }
+                }
+            } catch (err) {
+                console.warn(`Error adding ${file?.name} to zip:`, err);
             }
-
-            // Build the path inside the zip. When pathFor is provided we keep the
-            // original folder structure (e.g. "Folder 1-a/File 1").
-            let zipPath = pathFor ? pathFor(file) : file.name;
-            zipPath = ensureUniquePath(zipPath);
-
-            zip.file(zipPath, data);
-            downloadedCount++;
-        } catch (err) {
-            console.warn(`Error adding ${file.name} to zip:`, err);
+            finished++;
+            // Progress: 0-80% for downloads, 80-90% for zip generation
+            if (onProgress) onProgress((finished / total) * 0.8);
         }
-
-        // Progress: 0-80% for downloads, 80-90% for zip generation
-        if (onProgress) onProgress(((i + 1) / total) * 0.8);
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, total) }, worker));
 
     if (signal?.aborted) return { success: false, count: 0, aborted: true, error: 'Download cancelled' };
     if (downloadedCount === 0) return { success: false, count: 0, error: 'No files could be downloaded' };
@@ -554,6 +620,8 @@ export async function downloadFilesAsZip(files, onProgress, options = {}) {
 
     const blob = await zip.generateAsync({
         type: 'blob',
+        compression: 'STORE', // PDF/PPTX는 이미 압축된 형식이라 재압축은 시간만 낭비
+        streamFiles: true,
         // Update progress during zip generation
         onUpdate: (metadata) => {
             if (onProgress) onProgress(0.85 + metadata.percent / 100 * 0.15);

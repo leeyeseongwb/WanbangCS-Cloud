@@ -26,9 +26,15 @@ const PAGE_SIZE = 20;
 
 // Sidebar filter: group files by extension (pdf / pptx / everything else)
 const fileKind = (f) => {
-  const ext = (f.name || "").split(".").pop().toLowerCase();
-  if (ext === "pdf") return "pdf";
-  if (ext === "ppt" || ext === "pptx") return "pptx";
+  // 이름에 확장자가 없거나 이름이 바뀐 경우를 대비해 storage_path / MIME 타입도 확인
+  const extOf = (s) => {
+    const m = (s || "").trim().toLowerCase().match(/\.([a-z0-9]+)$/);
+    return m ? m[1] : "";
+  };
+  const ext = extOf(f.name) || extOf(f.storage_path);
+  const mime = (f.file_type || "").toLowerCase();
+  if (ext === "pdf" || mime.includes("pdf")) return "pdf";
+  if (ext === "ppt" || ext === "pptx" || mime.includes("presentation") || mime.includes("powerpoint")) return "pptx";
   return "other";
 };
 
