@@ -104,7 +104,7 @@ function GridCard({ file, isManager, onDragStart, onContextMenu, selected, onSel
           </button>
         </div>
       </div>
-      <h3 className="font-medium text-sm truncate mb-1 min-w-0" title={file.name}>{truncateFileName(file.name)}</h3>
+      <h3 className="font-medium text-sm line-clamp-2 break-words mb-1 min-w-0" title={file.name}>{file.name}</h3>
       {file.description && <p className="text-xs text-muted-foreground truncate mb-3 min-w-0" title={file.description}>{file.description}</p>}
       <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-auto pt-3 border-t border-border">
         <span className="flex items-center gap-1"><HardDrive className="h-3 w-3" />{formatBytes(file.file_size)}</span>
@@ -148,7 +148,7 @@ function CompactCard({ file, isManager, onDragStart, onContextMenu, selected, on
         <Icon className="h-5 w-5" />
       </div>
       <div className="w-full">
-        <p className="text-xs font-medium truncate min-w-0" title={file.name}>{truncateFileName(file.name, 22)}</p>
+        <p className="text-xs font-medium line-clamp-2 break-words min-w-0" title={file.name}>{file.name}</p>
         <p className="text-[10px] text-muted-foreground">{formatBytes(file.file_size)}</p>
       </div>
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -192,7 +192,7 @@ function ListRow({ file, isManager, onDragStart, onContextMenu, selected, onSele
         <Icon className="h-4 w-4" />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium truncate min-w-0 overflow-hidden">{truncateFileName(file.name)}</p>
+        <p className="text-sm font-medium truncate min-w-0 overflow-hidden" title={file.name}>{file.name}</p>
         {file.description && <p className="text-xs text-muted-foreground truncate min-w-0 overflow-hidden">{file.description}</p>}
       </div>
       {isManager && isHidden && (
