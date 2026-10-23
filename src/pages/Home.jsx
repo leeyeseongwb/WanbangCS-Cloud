@@ -168,6 +168,19 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
     return hidden;
   }, [allFolders, isManager]);
 
+  // 폴더 자신 + 모든 하위 폴더의 ID 집합
+  const descendantIds = useCallback((rootId) => {
+    const ids = new Set([rootId]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const f of allFolders) {
+        if (f.parent_folder_id && ids.has(f.parent_folder_id) && !ids.has(f.id)) { ids.add(f.id); grew = true; }
+      }
+    }
+    return ids;
+  }, [allFolders]);
+
   // Filtered & sorted files
   const filteredFiles = useMemo(() => {
     let result = files;
@@ -176,7 +189,11 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
     if (!isManager && hiddenFolderIds.size > 0) {
       result = result.filter((f) => !f.folder_id || !hiddenFolderIds.has(f.folder_id));
     }
-    if (currentFolder) {
+    if (currentFolder && category !== "all") {
+      // 타입 필터: 폴더 구분 없이 현재 폴더 및 모든 하위 폴더의 파일을 리스트로 표시
+      const ids = descendantIds(currentFolder.id);
+      result = result.filter((f) => ids.has(f.folder_id));
+    } else if (currentFolder) {
       result = result.filter((f) => f.folder_id === currentFolder.id);
     } else if (!search.trim() && category === "all") {
       // 중첩 폴더 지원: folder_id가 있으면(어떤 폴더에 속해있으면) 루트에서 숨김
@@ -204,7 +221,7 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
       return 0;
     });
     return result;
-  }, [files, folders, currentFolder, category, search, isManager, sortBy, sortOrder, hiddenFolderIds]);
+  }, [files, folders, currentFolder, category, search, isManager, sortBy, sortOrder, hiddenFolderIds, descendantIds]);
 
   const filteredFileIds = useMemo(() => filteredFiles.map(f => f.id), [filteredFiles]);
 
@@ -215,13 +232,13 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
   );
 
   const visibleFolders = useMemo(() => {
-    if (search.trim()) return [];
+    if (search.trim() || category !== "all") return [];
     // 일반 사용자에게는 private 폴더(및 하위)를 숨김
     if (!isManager && hiddenFolderIds.size > 0) {
       return folders.filter((f) => !hiddenFolderIds.has(f.id));
     }
     return folders; // folders query already filters by currentFolder
-  }, [folders, search, isManager, hiddenFolderIds]);
+  }, [folders, search, category, isManager, hiddenFolderIds]);
 
   // Full ancestor chain (root → … → currentFolder) so the breadcrumb can show
   // every level and let managers drop items onto any ancestor to move them up.
@@ -265,8 +282,13 @@ useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
   // Reset page when filters change
   useEffect(() => { setCurrentPage(1); }, [search, category, currentFolder, sortBy, sortOrder]);
 
-  const fileCountForFolder = (folderId) => files.filter((f) => f.folder_id === folderId).length;
-  const folderTotalSize = (folderId) => files.filter((f) => f.folder_id === folderId).reduce((sum, f) => sum + (f.file_size || 0), 0);
+  // 하위 폴더의 파일까지 모두 포함 (일반 사용자에게는 비공개 파일 제외)
+  const filesInTree = (folderId) => {
+    const ids = descendantIds(folderId);
+    return files.filter((f) => ids.has(f.folder_id) && (isManager || f.published !== false) && (isManager || !hiddenFolderIds.has(f.folder_id)));
+  };
+  const fileCountForFolder = (folderId) => filesInTree(folderId).length;
+  const folderTotalSize = (folderId) => filesInTree(folderId).reduce((sum, f) => sum + (f.file_size || 0), 0);
 
   const openFolder = (folder) => { clearSelection(); setSearch(""); setCurrentFolder(folder); setCategory("all"); };
 
